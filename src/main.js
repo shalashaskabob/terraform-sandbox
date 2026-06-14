@@ -48,19 +48,21 @@ function genTerrain() {
   fL.fill(0); fR.fill(0); fU.fill(0); fD.fill(0); vx.fill(0); vy.fill(0);
   sources.clear();
 
-  const oct = [{ f: 0.012, a: 30 }, { f: 0.025, a: 16 }, { f: 0.05, a: 8 }, { f: 0.1, a: 4 }];
+  const oct = [{ f: 0.012, a: 32 }, { f: 0.025, a: 17 }, { f: 0.05, a: 9 }, { f: 0.1, a: 4 }];
   const offs = oct.map(() => [rnd() * 1000, rnd() * 1000]);
+  const soilOX = rnd() * 1000, soilOY = rnd() * 1000;
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     let h = 0;
     for (let o = 0; o < oct.length; o++)
       h += valNoise((x + offs[o][0]) * oct[o].f, (y + offs[o][1]) * oct[o].f) * oct[o].a;
     const nx = (x / W - 0.5) * 2, ny = (y / H - 0.5) * 2;
-    h -= (nx * nx + ny * ny) * 18;               // radial falloff -> island
+    h -= (nx * nx + ny * ny) * 16;               // radial falloff -> island
     const i = I(x, y);
-    const total = clamp(22 + h, 2, 220);
-    // a thin, erodible topsoil mantle sitting on a hard bedrock floor.
-    // water only carves the soil; bedrock resists, so canyons stop at rock.
-    const soil = clamp(9 + h * 0.16, 3, 24);
+    const total = clamp(26 + h, 2, 220);
+    // an uneven, erodible topsoil mantle over layered bedrock. Soil thickness
+    // varies spatially so erosion exposes the strata unevenly.
+    const soilN = valNoise((x + soilOX) * 0.06, (y + soilOY) * 0.06) * 5;
+    const soil = clamp(8 + h * 0.14 + soilN, 2, 26);
     sand[i] = Math.min(soil, total - 1);
     rock[i] = total - sand[i];
   }
@@ -80,7 +82,18 @@ const dt = 0.10, G = 10, Lpipe = 1.0;
 const Kc = 0.45, Ks = 0.12, Kd = 0.10, Kevap = 0.006, FLUXDAMP = 0.985, MINW = 0.0008;
 const ERODE_MAX = 0.06;       // max terrain change per erosion pass (gentle)
 const EROSION_EVERY = 3;      // erosion runs only every N sim ticks (slow & watchable)
+const BASEMENT = 12;          // bedrock below this elevation never erodes (map floor)
 let raining = false, paused = false;
+
+// Geological strata colours (top layer first), revealed as canyons cut down.
+const STRATA = [
+  [158, 126, 88],  // tan sandstone
+  [128, 114, 98],  // pale grey limestone
+  [100, 88, 78],   // brown mudstone
+  [82, 84, 94],    // blue-grey slate
+  [116, 96, 70],   // ochre
+  [92, 78, 70],    // dark shale
+];
 
 // Simulation speed control: water flows every tick, but the whole sim advances
 // on an accumulator so we can run it slowly enough to watch erosion happen.
@@ -89,6 +102,16 @@ const SPEEDS = [0.25, 0.5, 1, 2, 4];
 let simSpeed = 1;
 let simAcc = 0;
 const surf = i => rock[i] + sand[i] + lava[i];
+
+// Erosion resistance of bedrock by elevation: soft layers near the surface,
+// progressively harder with depth, alternating hard/soft strata, and a fully
+// unerodible basement below BASEMENT so nothing carves down to the map floor.
+function hardness(e) {
+  if (e <= BASEMENT) return 0;
+  const depthSoft = clamp((e - BASEMENT) / 45, 0.06, 1);  // higher up = softer/faster
+  const band = 0.55 + 0.45 * Math.sin(e * 0.5);           // alternating hard/soft bands
+  return depthSoft * band;
+}
 
 function stepWater() {
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -131,10 +154,17 @@ function stepErosion() {
     const speed = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
     const C = Kc * sinT * speed * Math.min(1, water[i] * 3);
     if (C > sed[i]) {
-      // erode only the soil mantle — bedrock (rock) is the hard floor and never erodes
       let e = Ks * (C - sed[i]); if (e > ERODE_MAX) e = ERODE_MAX;
+      // topsoil erodes freely
       const fromSand = Math.min(sand[i], e);
-      sand[i] -= fromSand; sed[i] += fromSand;
+      sand[i] -= fromSand; let removed = fromSand; const rem = e - fromSand;
+      // then bedrock erodes slowly, scaled by the hardness of the current strata
+      // layer, and never below the unerodible basement
+      if (rem > 0) {
+        const allow = rock[i] - BASEMENT;
+        if (allow > 0) { const re = Math.min(allow, rem * hardness(rock[i])); rock[i] -= re; removed += re; }
+      }
+      sed[i] += removed;
     } else { let dp = Kd * (sed[i] - C); if (dp > ERODE_MAX) dp = ERODE_MAX; sand[i] += dp; sed[i] -= dp; }
   }
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -296,9 +326,12 @@ function updateMeshes() {
     tp[p + 1] = sh * HS;
     let r, g, b;
     const soilMix = clamp(sand[i] / 7, 0, 1);                 // 0 = bare bedrock, 1 = full soil
-    // bedrock with sedimentary strata banding (shows where water has cut down to rock)
-    const strata = 0.80 + 0.20 * Math.sin(rock[i] * 0.5);
-    const rr = 104 * strata, rg = 98 * strata, rb = 90 * strata;
+    // bedrock colour drawn from a stack of strata that varies with elevation,
+    // so canyons reveal distinct coloured layers
+    const be = rock[i];
+    const sc = STRATA[((Math.floor(clamp(be, 0, 240) / 6.5) % STRATA.length) + STRATA.length) % STRATA.length];
+    const shade = 0.82 + 0.18 * Math.sin(be * 1.25);
+    const rr = sc[0] * shade, rg = sc[1] * shade, rb = sc[2] * shade;
     // brown topsoil over the bedrock
     r = rr + (150 - rr) * soilMix; g = rg + (116 - rg) * soilMix; b = rb + (74 - rb) * soilMix;
     // snowy peaks
@@ -390,13 +423,14 @@ function resize() {
 //================================================================
 // Tools / painting
 //================================================================
-const T_LAND = 0, T_WATER = 1, T_LAVA = 2, T_ROCK = 3, T_PLANT = 4, T_SPRING = 5, T_SCOOP = 6, T_HAND = 7;
+const T_LAND = 0, T_WATER = 1, T_LAVA = 2, T_ROCK = 3, T_PLANT = 4, T_SPRING = 5, T_SCOOP = 6, T_HAND = 7, T_METEOR = 8;
 const TOOLS = [
   { id: T_HAND, name: 'Move', ic: '✋' },
   { id: T_LAND, name: 'Land', ic: '⛰' },
   { id: T_WATER, name: 'Water', ic: '💧' },
   { id: T_SPRING, name: 'Spring', ic: '⛲' },
   { id: T_LAVA, name: 'Lava', ic: '🌋' },
+  { id: T_METEOR, name: 'Meteor', ic: '☄️' },
   { id: T_ROCK, name: 'Rock', ic: '🪨' },
   { id: T_PLANT, name: 'Plant', ic: '🌱' },
   { id: T_SCOOP, name: 'Scoop', ic: '⛏' },
@@ -464,6 +498,7 @@ canvas.addEventListener('pointerdown', e => {
   if (pointers.size === 2) gesture = twoFingerState();
   else if (pointers.size === 1) {
     if (tool === T_SPRING) { const g = screenToGrid(e.clientX, e.clientY); if (g) placeSpring(g[0], g[1]); }
+    else if (tool === T_METEOR) { const g = screenToGrid(e.clientX, e.clientY); if (g) callAsteroid(g[0], g[1]); }
   }
   e.preventDefault();
 }, { passive: false });
@@ -531,11 +566,99 @@ document.getElementById('helpBtn').addEventListener('click', showToast);
 showToast(); setTimeout(() => { if (toast.classList.contains('show')) hideToast(); }, 8000);
 
 //================================================================
+// Asteroids — call one in; it falls and realistically impacts the world
+//================================================================
+const asteroids = [], flashes = [], rings = [];
+const astGeo = new THREE.IcosahedronGeometry(2.6, 0);
+const astMat = new THREE.MeshStandardMaterial({ color: 0x2e2118, emissive: 0xff5a1e, emissiveIntensity: 1.5, roughness: 1, metalness: 0 });
+const flashGeo = new THREE.SphereGeometry(1, 16, 12);
+const flashMat = new THREE.MeshBasicMaterial({ color: 0xfff0c0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+const ringGeo = new THREE.RingGeometry(0.86, 1.0, 48);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0xffb060, transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending });
+
+function callAsteroid(gx, gy) {
+  if (asteroids.length > 6) return;
+  const x = clamp(gx | 0, 2, W - 3), z = clamp(gy | 0, 2, H - 3);
+  const R = clamp(brush * 0.7, 5, 20);
+  const a = {
+    gx: x, gz: z, R, t: 0,
+    wx: x - W / 2, wz: z - H / 2,
+    ox: (Math.random() - 0.5) * 50, oz: (Math.random() - 0.5) * 50,
+    startY: 200 + R * 5, targetY: surf(I(x, z)) * HS + 1,
+    mesh: new THREE.Mesh(astGeo, astMat),
+    light: new THREE.PointLight(0xff6a2c, 2.4, 150),
+  };
+  a.mesh.scale.setScalar(R * 0.22);
+  scene.add(a.mesh); scene.add(a.light);
+  asteroids.push(a);
+}
+
+function impact(cx, cz, R) {
+  const depth = R * 0.9, rimR = R * 1.7, reach = Math.ceil(rimR * 1.4);
+  for (let dy = -reach; dy <= reach; dy++) for (let dx = -reach; dx <= reach; dx++) {
+    const x = cx + dx, y = cz + dy; if (!inb(x, y)) continue;
+    const i = I(x, y), dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < R) {
+      // excavate a bowl — through soil and into bedrock (impacts beat hardness)
+      const bowl = depth * (1 - (dist / R) * (dist / R));
+      let rem = bowl;
+      const fs = Math.min(sand[i], rem); sand[i] -= fs; rem -= fs;
+      if (rem > 0) rock[i] = Math.max(BASEMENT * 0.5, rock[i] - rem);
+      if (water[i] > MINW) { steamFx[i] = 1; water[i] *= 0.12; }   // flash to steam
+      ltemp[i] = Math.max(ltemp[i], 600 * (1 - dist / R));
+      if (dist < R * 0.35) { lava[i] += 1.4 * (1 - dist / (R * 0.35)); ltemp[i] = Math.max(ltemp[i], 520); }
+    } else if (dist < rimR) {
+      // raised ejecta rim
+      const t = (rimR - dist) / (rimR - R);
+      sand[i] += depth * 0.32 * t * t;
+    }
+    // splash waves: depress the centre, raise a ring where there is water
+    if (water[i] > MINW && dist >= R * 0.8 && dist < reach) {
+      water[i] += 1.5 * Math.max(0, 1 - Math.abs(dist - R) / R);
+    }
+  }
+  spawnFlash(cx, cz, R);
+}
+
+function spawnFlash(cx, cz, R) {
+  const wx = cx - W / 2, wz = cz - H / 2, y = surf(I(cx, cz)) * HS;
+  const f = new THREE.Mesh(flashGeo, flashMat.clone());
+  f.position.set(wx, y + R * 0.4, wz); f.scale.setScalar(R * 0.6); scene.add(f);
+  flashes.push({ mesh: f, t: 0, base: R * 0.6, grow: R * 1.8 });
+  const r = new THREE.Mesh(ringGeo, ringMat.clone());
+  r.rotation.x = -Math.PI / 2; r.position.set(wx, y + 0.6, wz); r.scale.setScalar(R); scene.add(r);
+  rings.push({ mesh: r, t: 0, max: R * 7 });
+}
+
+function updateEffects() {
+  for (let k = asteroids.length - 1; k >= 0; k--) {
+    const a = asteroids[k]; a.t += 0.03; const tt = a.t;
+    const x = a.wx + a.ox * (1 - tt), z = a.wz + a.oz * (1 - tt);
+    const y = a.startY + (a.targetY - a.startY) * (tt * tt);   // accelerate as it falls
+    a.mesh.position.set(x, y, z); a.mesh.rotation.x += 0.3; a.mesh.rotation.y += 0.22;
+    a.light.position.set(x, y + 3, z);
+    if (tt >= 1) { scene.remove(a.mesh); scene.remove(a.light); impact(a.gx, a.gz, a.R); asteroids.splice(k, 1); }
+  }
+  for (let k = flashes.length - 1; k >= 0; k--) {
+    const f = flashes[k]; f.t += 0.06;
+    f.mesh.scale.setScalar(f.base + f.grow * f.t);
+    f.mesh.material.opacity = Math.max(0, 1 - f.t);
+    if (f.t >= 1) { scene.remove(f.mesh); f.mesh.material.dispose(); flashes.splice(k, 1); }
+  }
+  for (let k = rings.length - 1; k >= 0; k--) {
+    const r = rings[k]; r.t += 0.035;
+    r.mesh.scale.setScalar(1 + (r.max - 1) * r.t);
+    r.mesh.material.opacity = 0.8 * Math.max(0, 1 - r.t);
+    if (r.t >= 1) { scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(k, 1); }
+  }
+}
+
+//================================================================
 // Loop
 //================================================================
 function loop() {
   // continuous sculpting while a single finger is held (springs are discrete)
-  if (pointers.size === 1 && tool !== T_SPRING && tool !== T_HAND) {
+  if (pointers.size === 1 && tool !== T_SPRING && tool !== T_HAND && tool !== T_METEOR) {
     const p = [...pointers.values()][0];
     const g = screenToGrid(p.x, p.y);
     if (g) paintGrid(g[0], g[1]);
@@ -546,6 +669,7 @@ function loop() {
     while (simAcc >= 1 && n < 4) { simulate(); simAcc -= 1; n++; }
     if (simAcc > 1) simAcc = 1;
   }
+  updateEffects();
   updateMeshes();
   updateCamera();
   renderer.render(scene, camera);
