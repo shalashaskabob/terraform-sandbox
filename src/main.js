@@ -390,8 +390,9 @@ function resize() {
 //================================================================
 // Tools / painting
 //================================================================
-const T_LAND = 0, T_WATER = 1, T_LAVA = 2, T_ROCK = 3, T_PLANT = 4, T_SPRING = 5, T_SCOOP = 6;
+const T_LAND = 0, T_WATER = 1, T_LAVA = 2, T_ROCK = 3, T_PLANT = 4, T_SPRING = 5, T_SCOOP = 6, T_HAND = 7;
 const TOOLS = [
+  { id: T_HAND, name: 'Move', ic: '✋' },
   { id: T_LAND, name: 'Land', ic: '⛰' },
   { id: T_WATER, name: 'Water', ic: '💧' },
   { id: T_SPRING, name: 'Spring', ic: '⛲' },
@@ -469,7 +470,9 @@ canvas.addEventListener('pointerdown', e => {
 
 canvas.addEventListener('pointermove', e => {
   if (!pointers.has(e.pointerId)) return;
-  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const prev = pointers.get(e.pointerId);
+  const px = e.clientX, py = e.clientY;
+  pointers.set(e.pointerId, { x: px, y: py });
   if (pointers.size >= 2) {
     const s = twoFingerState();
     if (gesture) {
@@ -478,6 +481,10 @@ canvas.addEventListener('pointermove', e => {
       if (s.dist > 0 && gesture.dist > 0) cam.radius = clamp(cam.radius * (gesture.dist / s.dist), W * 0.4, W * 3);
     }
     gesture = s;
+  } else if (tool === T_HAND) {
+    // Move tool: a single finger orbits the camera instead of sculpting
+    cam.az -= (px - prev.x) * 0.006;
+    cam.polar = clamp(cam.polar - (py - prev.y) * 0.006, 0.15, 1.45);
   }
   e.preventDefault();
 }, { passive: false });
@@ -528,7 +535,7 @@ showToast(); setTimeout(() => { if (toast.classList.contains('show')) hideToast(
 //================================================================
 function loop() {
   // continuous sculpting while a single finger is held (springs are discrete)
-  if (pointers.size === 1 && tool !== T_SPRING) {
+  if (pointers.size === 1 && tool !== T_SPRING && tool !== T_HAND) {
     const p = [...pointers.values()][0];
     const g = screenToGrid(p.x, p.y);
     if (g) paintGrid(g[0], g[1]);
