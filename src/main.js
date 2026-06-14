@@ -3,7 +3,7 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
-const BUILD = 'v29';   // shown in the UI so you can confirm the live version
+const BUILD = 'v30';   // shown in the UI so you can confirm the live version
 
 //================================================================
 // Simulation fields
@@ -717,6 +717,7 @@ function updateEffects() {
     if (r.t >= 1) { scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(k, 1); }
   }
   animatePeople();
+  animateBoats();
 }
 
 //================================================================
@@ -732,12 +733,16 @@ const ERAS = [
   { name: 'Modern',      year: 1950,   col: 0x7fb0dc, h: 7.0, w: 0.85 },
 ];
 const BUILD_CAP = 260, PER_BUILDING = 12, PEOPLE_CAP = 90, SPACING = 3;
-let pop = 0, year = -10000, lastEra = -1;
-const buildings = [];
-const people = [];
-const ROAD_CAP = 220, FARM_CAP = 130;
-const roads = [], farms = [], wonders = [];
-const farmed = new Set(), wonderEras = new Set();
+const ROAD_CAP = 220, FARM_CAP = 130, BOAT_CAP = 28, MAX_CIVS = 5;
+let year = -10000, lastEra = -1;
+const civs = [];
+const people = [], roads = [], farms = [], wonders = [], boats = [];
+const farmed = new Set();
+const CIV_PALETTE = [
+  { hex: 0xd9534f, name: 'Crimson' }, { hex: 0x4a90d9, name: 'Azure' },
+  { hex: 0x5fae4a, name: 'Verdant' }, { hex: 0x9b59b6, name: 'Violet' },
+  { hex: 0xe08e2b, name: 'Amber' },
+];
 const G_BOX = new THREE.BoxGeometry(1, 1, 1);
 const G_CONE = new THREE.ConeGeometry(0.7, 1, 6);
 const G_CYL = new THREE.CylinderGeometry(0.55, 0.7, 1, 6);
@@ -746,36 +751,63 @@ const G_FARM = new THREE.PlaneGeometry(1, 1);
 const G_PBODY = new THREE.BoxGeometry(0.34, 0.8, 0.24);
 const G_PHEAD = new THREE.BoxGeometry(0.3, 0.3, 0.3);
 const G_PLEG = new THREE.BoxGeometry(0.13, 0.7, 0.13);
-let eraMats = null, roofMat = null, bodyMat = null, skinMat = null;
-let roadDirt = null, roadStone = null, roadAsphalt = null, farmMat = null;
+const G_HULL = new THREE.BoxGeometry(0.6, 0.3, 1.3);
+const G_SAIL = new THREE.BoxGeometry(0.08, 0.95, 0.6);
+let sharedReady = false;
+let roofMat = null, skinMat = null, roadDirt = null, roadStone = null, roadAsphalt = null, farmMat = null, hullMat = null, sailMat = null;
 
 function eraIndex(y) { let e = 0; for (let k = 0; k < ERAS.length; k++) if (y >= ERAS[k].year) e = k; return e; }
 function fmtYear(y) { const v = Math.round(y); return v < 0 ? (-v) + ' BCE' : v + ' CE'; }
+function totalPop() { let s = 0; for (const c of civs) s += c.pop; return s; }
+function totalBuildings() { let s = 0; for (const c of civs) s += c.buildings.length; return s; }
 
 function ensureCivAssets() {
-  if (eraMats) return;
-  eraMats = ERAS.map((e) => new THREE.MeshStandardMaterial({
-    color: e.col, roughness: e.name === 'Modern' ? 0.25 : 0.85,
-    metalness: e.name === 'Modern' ? 0.45 : 0.0,
-    emissive: e.name === 'Modern' ? 0x10202e : 0x000000,
-  }));
+  if (sharedReady) return; sharedReady = true;
   roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4036, roughness: 0.9 });
-  bodyMat = new THREE.MeshStandardMaterial({ color: 0x3f6ea8, roughness: 0.7 });   // shirt
-  skinMat = new THREE.MeshStandardMaterial({ color: 0xe7b58c, roughness: 0.7 });   // head/legs
+  skinMat = new THREE.MeshStandardMaterial({ color: 0xe7b58c, roughness: 0.7 });
   roadDirt = new THREE.MeshStandardMaterial({ color: 0x6b5a3f, roughness: 1 });
   roadStone = new THREE.MeshStandardMaterial({ color: 0x8a8076, roughness: 1 });
   roadAsphalt = new THREE.MeshStandardMaterial({ color: 0x32343a, roughness: 0.9 });
   farmMat = new THREE.MeshStandardMaterial({ color: 0x6f9b3c, roughness: 1 });
+  hullMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2c, roughness: 0.9 });
+  sailMat = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.8 });
+}
+function makeCivMats(hex) {
+  const civC = new THREE.Color(hex);
+  return ERAS.map((e) => {
+    const col = new THREE.Color(e.col).lerp(civC, 0.5);
+    return new THREE.MeshStandardMaterial({
+      color: col, roughness: e.name === 'Modern' ? 0.3 : 0.85,
+      metalness: e.name === 'Modern' ? 0.35 : 0.0,
+      emissive: e.name === 'Modern' ? civC.clone().multiplyScalar(0.14) : new THREE.Color(0x000000),
+    });
+  });
+}
+function newCiv() {
+  ensureCivAssets();
+  if (civs.length >= MAX_CIVS) return null;
+  const pal = CIV_PALETTE[civs.length];
+  const c = {
+    id: civs.length, name: pal.name, hex: pal.hex, color: new THREE.Color(pal.hex),
+    mats: makeCivMats(pal.hex), bodyMat: new THREE.MeshStandardMaterial({ color: pal.hex, roughness: 0.7 }),
+    pop: 0, buildings: [], wonderEras: new Set(),
+  };
+  civs.push(c); return c;
+}
+function nearestCiv(x, y) {
+  let best = null, bd = 1e9;
+  for (const c of civs) for (const b of c.buildings) { const d = Math.hypot(b.gx - x, b.gy - y); if (d < bd) { bd = d; best = c; } }
+  return { civ: best, dist: bd };
 }
 function resetCivilization() {
-  for (const b of buildings) if (b.group) scene.remove(b.group);
-  for (const p of people) if (p.mesh) scene.remove(p.mesh);
+  for (const c of civs) for (const b of c.buildings) scene.remove(b.group);
+  for (const p of people) scene.remove(p.mesh);
   for (const r of roads) scene.remove(r.mesh);
   for (const f of farms) scene.remove(f.mesh);
   for (const w of wonders) scene.remove(w.group);
-  buildings.length = 0; people.length = 0; roads.length = 0; farms.length = 0; wonders.length = 0;
-  farmed.clear(); wonderEras.clear();
-  pop = 0; year = -10000; lastEra = -1;
+  for (const bo of boats) scene.remove(bo.mesh);
+  civs.length = 0; people.length = 0; roads.length = 0; farms.length = 0; wonders.length = 0; boats.length = 0;
+  farmed.clear(); year = -10000; lastEra = -1;
 }
 
 // Is a cell habitable at all (dry-ish land, not lava, not a cliff)?
@@ -800,22 +832,22 @@ function buildable(x, y) {
   return true;
 }
 // Distinct architecture per age, built so the base sits at y = 0.
-function buildMeshForEra(era, rnd) {
-  const g = new THREE.Group(), mat = eraMats[era], s = 1 + rnd * 0.5;
-  if (era === 0) {                         // Prehistoric: tent/hut
+function buildMeshForEra(era, rnd, mat) {
+  const g = new THREE.Group(), s = 1 + rnd * 0.5;
+  if (era === 0) {
     const w = 1.8 * s, h = 1.5 * s; const m = new THREE.Mesh(G_CONE, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
-  } else if (era === 1) {                  // Stone Age: round hut + thatched cone roof
+  } else if (era === 1) {
     const w = 1.9 * s, h = 1.7 * s; const base = new THREE.Mesh(G_CYL, mat); base.scale.set(w, h, w); base.position.y = h / 2; g.add(base);
     const roof = new THREE.Mesh(G_CONE, roofMat); roof.scale.set(w * 1.15, h * 0.85, w * 1.15); roof.position.y = h + h * 0.42; g.add(roof);
-  } else if (era === 2) {                   // Ancient: stone block
+  } else if (era === 2) {
     const w = 2.3 * s, h = 2.5 * s; const m = new THREE.Mesh(G_BOX, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
-  } else if (era === 3) {                   // Medieval: tower with spire
+  } else if (era === 3) {
     const w = 1.8 * s, h = 3.7 * s; const base = new THREE.Mesh(G_BOX, mat); base.scale.set(w, h, w); base.position.y = h / 2; g.add(base);
     const roof = new THREE.Mesh(G_CONE, roofMat); roof.scale.set(w * 1.25, h * 0.55, w * 1.25); roof.position.y = h + h * 0.24; g.add(roof);
-  } else if (era === 4) {                   // Industrial: brick block + chimney
+  } else if (era === 4) {
     const w = 2.4 * s, h = 3.3 * s; const m = new THREE.Mesh(G_BOX, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
     const ch = new THREE.Mesh(G_BOX, roofMat); ch.scale.set(w * 0.22, h * 0.95, w * 0.22); ch.position.set(w * 0.3, h + h * 0.42, w * 0.3); g.add(ch);
-  } else {                                  // Modern: glass skyscraper + antenna
+  } else {
     const w = 1.8 * s, h = 8 * s; const m = new THREE.Mesh(G_BOX, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
     const ant = new THREE.Mesh(G_BOX, roofMat); ant.scale.set(w * 0.12, h * 0.18, w * 0.12); ant.position.y = h + h * 0.09; g.add(ant);
   }
@@ -824,44 +856,45 @@ function buildMeshForEra(era, rnd) {
 function seatBuilding(b) { b.group.position.set(b.gx - W / 2, solidH(I(b.gx, b.gy)) * HS, b.gy - H / 2); }
 function styleBuilding(b, era) {
   if (b.group) scene.remove(b.group);
-  b.tier = era; b.group = buildMeshForEra(era, b.rnd); scene.add(b.group); seatBuilding(b);
+  b.tier = era; b.group = buildMeshForEra(era, b.rnd, b.civ.mats[era]); scene.add(b.group); seatBuilding(b);
 }
-function addBuilding(x, y, era) {
-  if (buildings.length >= BUILD_CAP) return false;
+function addBuilding(civ, x, y, era) {
+  if (totalBuildings() >= BUILD_CAP) return false;
   ensureCivAssets();
-  const b = { gx: x, gy: y, group: null, baseH: solidH(I(x, y)), rnd: Math.random(), tier: -1, dead: false };
-  occupied[I(x, y)] = 1; buildings.push(b); styleBuilding(b, era); linkRoad(b, era);
+  const b = { gx: x, gy: y, group: null, baseH: solidH(I(x, y)), rnd: Math.random(), tier: -1, dead: false, civ };
+  occupied[I(x, y)] = 1; civ.buildings.push(b); styleBuilding(b, era); linkRoad(b, era);
   return true;
 }
-function destroyBuilding(k) {
-  const b = buildings[k]; b.dead = true; if (b.group) scene.remove(b.group);
-  occupied[I(b.gx, b.gy)] = 0; buildings.splice(k, 1); pop = Math.max(0, pop - PER_BUILDING);
+function killBuilding(b) {
+  const c = b.civ, k = c.buildings.indexOf(b);
+  if (k >= 0) c.buildings.splice(k, 1);
+  b.dead = true; if (b.group) scene.remove(b.group);
+  occupied[I(b.gx, b.gy)] = 0; c.pop = Math.max(0, c.pop - PER_BUILDING);
 }
-// A simple stick-figure: two legs, a body and a head, that can swing its legs.
-function makePerson() {
+// A simple stick-figure in the civ's colour, that can swing its legs.
+function makePerson(civ) {
   const g = new THREE.Group();
   const legL = new THREE.Mesh(G_PLEG, skinMat); legL.position.set(-0.12, 0.35, 0); g.add(legL);
   const legR = new THREE.Mesh(G_PLEG, skinMat); legR.position.set(0.12, 0.35, 0); g.add(legR);
-  const body = new THREE.Mesh(G_PBODY, bodyMat); body.position.y = 1.05; g.add(body);
+  const body = new THREE.Mesh(G_PBODY, civ.bodyMat); body.position.y = 1.05; g.add(body);
   const head = new THREE.Mesh(G_PHEAD, skinMat); head.position.y = 1.6; g.add(head);
   g.scale.setScalar(1.4); g.userData = { legL, legR };
   return g;
 }
-// keep the population of figures in sync with the actual population (count only)
 function updatePeople() {
   ensureCivAssets();
-  const want = clamp(Math.floor(pop / 8), 0, PEOPLE_CAP);
-  while (people.length < want && buildings.length) {
-    const home = buildings[(Math.random() * buildings.length) | 0];
-    const m = makePerson(); scene.add(m);
-    people.push({ mesh: m, home, px: home.gx, pz: home.gy, tx: undefined, tz: 0, phase: Math.random() * 6, speed: 0.035 + Math.random() * 0.05 });
+  const all = []; for (const c of civs) for (const b of c.buildings) all.push(b);
+  const want = clamp(Math.floor(totalPop() / 8), 0, PEOPLE_CAP);
+  while (people.length < want && all.length) {
+    const home = all[(Math.random() * all.length) | 0];
+    const m = makePerson(home.civ); scene.add(m);
+    people.push({ mesh: m, civ: home.civ, home, px: home.gx, pz: home.gy, tx: undefined, tz: 0, phase: Math.random() * 6, speed: 0.035 + Math.random() * 0.05 });
   }
   while (people.length > want) { const p = people.pop(); scene.remove(p.mesh); }
 }
-// per-frame: wander near home, face travel direction, swing legs to "walk"
 function animatePeople() {
   for (const p of people) {
-    if (!p.home || p.home.dead) { p.home = buildings.length ? buildings[(Math.random() * buildings.length) | 0] : null; if (p.home) { p.px = p.home.gx; p.pz = p.home.gy; p.tx = undefined; } }
+    if (!p.home || p.home.dead) { const bs = p.civ.buildings; p.home = bs.length ? bs[(Math.random() * bs.length) | 0] : null; if (p.home) { p.px = p.home.gx; p.pz = p.home.gy; p.tx = undefined; } }
     if (!p.home) { p.mesh.visible = false; continue; }
     p.mesh.visible = true;
     if (p.tx === undefined || (Math.abs(p.px - p.tx) < 0.4 && Math.abs(p.pz - p.tz) < 0.4)) {
@@ -876,33 +909,73 @@ function animatePeople() {
     p.mesh.userData.legL.rotation.x = sw; p.mesh.userData.legR.rotation.x = -sw;
   }
 }
-function destroyBuildingsNear(cx, cz, R) {
-  let n = 0;
-  for (let k = buildings.length - 1; k >= 0; k--) {
-    const b = buildings[k];
-    if (Math.hypot(b.gx - cx, b.gy - cz) <= R) { destroyBuilding(k); n++; }
+// Boats wander on water bodies near coastal towns.
+function makeBoat() {
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(G_HULL, hullMat); hull.position.y = 0.15; g.add(hull);
+  const sail = new THREE.Mesh(G_SAIL, sailMat); sail.position.y = 0.7; g.add(sail);
+  g.scale.setScalar(1.3); return g;
+}
+function isWater(x, y) { return inb(x, y) && water[I(x, y)] > 0.25; }
+function updateBoats(era) {
+  ensureCivAssets();
+  const want = era < 1 ? 0 : clamp(Math.floor(totalPop() / 45), 0, BOAT_CAP);
+  const all = []; for (const c of civs) for (const b of c.buildings) all.push(b);
+  while (boats.length < want && all.length) {
+    let spot = null;
+    for (let a = 0; a < 12 && !spot; a++) {
+      const b = all[(Math.random() * all.length) | 0];
+      const x = clamp(b.gx + ((Math.random() * 13) | 0) - 6, 0, W - 1), y = clamp(b.gy + ((Math.random() * 13) | 0) - 6, 0, H - 1);
+      if (isWater(x, y)) spot = [x, y];
+    }
+    if (!spot) break;
+    const m = makeBoat(); scene.add(m);
+    boats.push({ mesh: m, px: spot[0], pz: spot[1], tx: spot[0], tz: spot[1] });
   }
-  if (n > 0) notify('☄️ Meteor flattened ' + n + ' settlement' + (n > 1 ? 's' : ''));
+  while (boats.length > want) { const bo = boats.pop(); scene.remove(bo.mesh); }
+}
+function animateBoats() {
+  const t = performance.now() * 0.003;
+  for (let k = boats.length - 1; k >= 0; k--) {
+    const bo = boats[k];
+    if (!isWater(bo.px | 0, bo.pz | 0)) { scene.remove(bo.mesh); boats.splice(k, 1); continue; }
+    if (Math.abs(bo.px - bo.tx) < 0.5 && Math.abs(bo.pz - bo.tz) < 0.5)
+      for (let a = 0; a < 8; a++) { const nx = clamp(bo.px + (Math.random() - 0.5) * 8, 0, W - 1), ny = clamp(bo.pz + (Math.random() - 0.5) * 8, 0, H - 1); if (isWater(nx, ny)) { bo.tx = nx; bo.tz = ny; break; } }
+    const dx = bo.tx - bo.px, dz = bo.tz - bo.pz, d = Math.hypot(dx, dz) || 1;
+    const npx = bo.px + dx / d * 0.03, npz = bo.pz + dz / d * 0.03;
+    if (isWater(npx | 0, npz | 0)) { bo.px = npx; bo.pz = npz; } else { bo.tx = bo.px; bo.tz = bo.pz; }
+    const i = I(bo.px | 0, bo.pz | 0);
+    bo.mesh.position.set(bo.px - W / 2, (surf(i) + water[i]) * HS + Math.sin(t + bo.px) * 0.12, bo.pz - H / 2);
+    bo.mesh.rotation.y = Math.atan2(dx, dz);
+  }
+}
+function destroyBuildingsNear(cx, cz, R) {
+  const kill = [];
+  for (const c of civs) for (const b of c.buildings) if (Math.hypot(b.gx - cx, b.gy - cz) <= R) kill.push(b);
+  for (const b of kill) killBuilding(b);
+  if (kill.length) notify('☄️ Meteor flattened ' + kill.length + ' settlement' + (kill.length > 1 ? 's' : ''));
 }
 function foundSettlement(gx, gy) {
   let x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
-  // place exactly where tapped; only nudge by 1 cell if that exact spot is
-  // water/lava/cliff/occupied
   if (!buildableManual(x, y)) {
     let best = null;
     for (let dy = -1; dy <= 1 && !best; dy++) for (let dx = -1; dx <= 1; dx++)
       if (buildableManual(x + dx, y + dy)) { best = [x + dx, y + dy]; break; }
     if (best) { x = best[0]; y = best[1]; }
   }
-  if (buildableManual(x, y)) { pop += PER_BUILDING + 8; addBuilding(x, y, eraIndex(year)); }
-  else pop += 8;
+  if (!buildableManual(x, y)) return;
+  const near = nearestCiv(x, y);
+  let civ;
+  if (civs.length < MAX_CIVS && (!near.civ || near.dist > 8)) { civ = newCiv(); notify('🏳️ New civilization: ' + civ.name); }
+  else civ = near.civ || newCiv();
+  civ.pop += PER_BUILDING + 8; addBuilding(civ, x, y, eraIndex(year));
 }
-function foundBuilding(era) {
+function foundBuilding(civ, era) {
   for (let a = 0; a < 14; a++) {
     let bx, by;
-    if (buildings.length) { const b = buildings[(Math.random() * buildings.length) | 0]; bx = b.gx + ((Math.random() * 9) | 0) - 4; by = b.gy + ((Math.random() * 9) | 0) - 4; }
+    if (civ.buildings.length) { const b = civ.buildings[(Math.random() * civ.buildings.length) | 0]; bx = b.gx + ((Math.random() * 9) | 0) - 4; by = b.gy + ((Math.random() * 9) | 0) - 4; }
     else { bx = (Math.random() * W) | 0; by = (Math.random() * H) | 0; }
-    if (buildable(bx, by)) return addBuilding(bx, by, era);
+    if (buildable(bx, by)) return addBuilding(civ, bx, by, era);
   }
   return false;
 }
@@ -912,7 +985,6 @@ function landCapacity(era) {
     if (water[i] < 0.3 && lava[i] < 0.02 && (rock[i] + sand[i]) > BASEMENT + 3) hab++;
   return hab * 3 * (era + 1) * 0.45;
 }
-// Roads connect a new building to its nearest neighbour (Stone Age onward).
 function addRoad(a, b, era) {
   if (roads.length >= ROAD_CAP) return;
   const ax = a.gx - W / 2, az = a.gy - H / 2, bx = b.gx - W / 2, bz = b.gy - H / 2;
@@ -926,13 +998,13 @@ function addRoad(a, b, era) {
 function linkRoad(nb, era) {
   if (era < 1) return;
   let best = null, bd = 1e9;
-  for (const b of buildings) { if (b === nb) continue; const d = Math.hypot(b.gx - nb.gx, b.gy - nb.gy); if (d < bd) { bd = d; best = b; } }
+  for (const b of nb.civ.buildings) { if (b === nb) continue; const d = Math.hypot(b.gx - nb.gx, b.gy - nb.gy); if (d < bd) { bd = d; best = b; } }
   if (best && bd <= 16) addRoad(nb, best, era);
 }
-// Farms: green crop tiles on dry land next to water near a town.
 function tryAddFarm(era) {
-  if (era < 1 || farms.length >= FARM_CAP || !buildings.length) return;
-  const b = buildings[(Math.random() * buildings.length) | 0];
+  if (era < 1 || farms.length >= FARM_CAP) return;
+  const all = []; for (const c of civs) for (const b of c.buildings) all.push(b); if (!all.length) return;
+  const b = all[(Math.random() * all.length) | 0];
   for (let a = 0; a < 6; a++) {
     const x = clamp(b.gx + ((Math.random() * 9) | 0) - 4, 0, W - 1), y = clamp(b.gy + ((Math.random() * 9) | 0) - 4, 0, H - 1), i = I(x, y);
     if (occupied[i] || farmed.has(i) || water[i] > 0.3 || lava[i] > 0.02 || solidH(i) < BASEMENT + 3) continue;
@@ -945,13 +1017,13 @@ function tryAddFarm(era) {
   }
 }
 const WONDER_NAMES = ['', '', 'Great Pyramid', 'Grand Castle', 'Iron Works', 'Skytower'];
-function buildWonder(era) {
-  if (!buildings.length) return;
-  let cx = 0, cy = 0; for (const b of buildings) { cx += b.gx; cy += b.gy; }
-  cx = (cx / buildings.length) | 0; cy = (cy / buildings.length) | 0;
+function buildWonder(civ, era) {
+  if (!civ.buildings.length) return;
+  let cx = 0, cy = 0; for (const b of civ.buildings) { cx += b.gx; cy += b.gy; }
+  cx = (cx / civ.buildings.length) | 0; cy = (cy / civ.buildings.length) | 0;
   let px = cx, py = cy;
   for (let r = 0; r < 12; r++) { const x = clamp(cx + ((Math.random() * 9) | 0) - 4, 2, W - 3), y = clamp(cy + ((Math.random() * 9) | 0) - 4, 2, H - 3); if (buildableManual(x, y)) { px = x; py = y; break; } }
-  const g = new THREE.Group(), mat = eraMats[era];
+  const g = new THREE.Group(), mat = civ.mats[era];
   if (era === 2) { const m = new THREE.Mesh(G_PYR, mat); m.scale.set(6, 5, 6); m.position.y = 2.5; g.add(m); }
   else if (era === 3) {
     const base = new THREE.Mesh(G_BOX, mat); base.scale.set(6, 3, 6); base.position.y = 1.5; g.add(base);
@@ -961,46 +1033,54 @@ function buildWonder(era) {
     for (const ox of [-2, 0, 2]) { const c = new THREE.Mesh(G_BOX, roofMat); c.scale.set(0.6, 4, 0.6); c.position.set(ox, 5, 1); g.add(c); }
   } else { const m = new THREE.Mesh(G_BOX, mat); m.scale.set(2.4, 16, 2.4); m.position.y = 8; g.add(m); const a = new THREE.Mesh(G_BOX, roofMat); a.scale.set(0.3, 3, 0.3); a.position.y = 17.5; g.add(a); }
   g.position.set(px - W / 2, solidH(I(px, py)) * HS, py - H / 2);
-  scene.add(g); wonders.push({ group: g, era }); occupied[I(px, py)] = 1;
-  notify('🗿 Wonder built: ' + (WONDER_NAMES[era] || 'Monument'));
+  scene.add(g); wonders.push({ group: g }); occupied[I(px, py)] = 1;
+  notify('🗿 ' + civ.name + ' built the ' + (WONDER_NAMES[era] || 'Monument'));
 }
-
+// Rival civilizations clash where their borders meet; the stronger conquers.
+function stepRivalry() {
+  if (civs.length < 2) return;
+  for (const c of civs) {
+    if (!c.buildings.length || Math.random() > 0.5) continue;
+    const b = c.buildings[(Math.random() * c.buildings.length) | 0];
+    for (const e of civs) {
+      if (e === c || !e.buildings.length) continue;
+      for (const eb of e.buildings) {
+        if (Math.hypot(eb.gx - b.gx, eb.gy - b.gy) <= 3) {
+          if (c.pop > e.pop * 0.9 && Math.random() < 0.25) { killBuilding(eb); c.pop += 4; if (Math.random() < 0.12) notify('⚔️ ' + c.name + ' raided ' + e.name); }
+          break;
+        }
+      }
+    }
+  }
+}
 function stepCivilization() {
-  if (pop <= 0 && buildings.length === 0) return;     // no society yet
+  if (!civs.length) return;
   const era = eraIndex(year);
-  if (era !== lastEra) { if (era > lastEra && buildings.length) notify('🏛 Entered the ' + ERAS[era].name + ' age — ' + fmtYear(year)); lastEra = era; }
-  if (pop > 0) {
-    // advance the year so each era lasts roughly the same wall-clock time,
-    // regardless of how many calendar years it actually spans
-    const nextY = era < ERAS.length - 1 ? ERAS[era + 1].year : ERAS[era].year + 4000;
-    year += Math.max(1, (nextY - ERAS[era].year) / 200);
-    const cap = Math.max(PER_BUILDING, landCapacity(era));
-    pop += 0.03 * pop * (1 - pop / cap);
-    pop = clamp(pop, 0, 1e6);
+  if (era !== lastEra) { if (era > lastEra && totalBuildings()) notify('🏛 Entered the ' + ERAS[era].name + ' age — ' + fmtYear(year)); lastEra = era; }
+  if (totalPop() > 0) { const nextY = era < ERAS.length - 1 ? ERAS[era + 1].year : ERAS[era].year + 4000; year += Math.max(1, (nextY - ERAS[era].year) / 200); }
+  const capTot = Math.max(PER_BUILDING, landCapacity(era));
+  for (const c of civs) {
+    if (c.pop > 0) { const cap = Math.max(PER_BUILDING, capTot / civs.length); c.pop += 0.03 * c.pop * (1 - c.pop / cap); c.pop = clamp(c.pop, 0, 1e6); }
+    const target = Math.floor(c.pop / PER_BUILDING);
+    let tries = 4; while (c.buildings.length < target && tries-- > 0) { if (!foundBuilding(c, era)) break; }
+    let lost = 0;
+    for (let k = c.buildings.length - 1; k >= 0; k--) {
+      const b = c.buildings[k], i = I(b.gx, b.gy);
+      if (water[i] > 0.8 || lava[i] > 0.05 || solidH(i) < b.baseH - 4) { killBuilding(b); lost++; continue; }
+      if (b.tier !== era) styleBuilding(b, era); seatBuilding(b);
+    }
+    if (lost > 0) notify('🌊 ' + c.name + ' lost ' + lost + ' settlement' + (lost > 1 ? 's' : ''));
+    if (era >= 2 && c.pop > 120 + era * 50 && !c.wonderEras.has(era)) { c.wonderEras.add(era); buildWonder(c, era); }
   }
-  // expand: build up to the population's needs
-  const target = Math.min(BUILD_CAP, Math.floor(pop / PER_BUILDING));
-  let tries = 6;
-  while (buildings.length < target && tries-- > 0) { if (!foundBuilding(era)) break; }
-  // disasters + upgrade existing buildings to the current age
-  let lost = 0;
-  for (let k = buildings.length - 1; k >= 0; k--) {
-    const b = buildings[k], i = I(b.gx, b.gy);
-    if (water[i] > 0.8 || lava[i] > 0.05 || solidH(i) < b.baseH - 4) { destroyBuilding(k); lost++; continue; }
-    if (b.tier !== era) styleBuilding(b, era);
-    seatBuilding(b);
-  }
-  if (lost > 0) notify('🌊 Disaster destroyed ' + lost + ' settlement' + (lost > 1 ? 's' : ''));
-  // farms grow near water; remove any that get flooded
+  stepRivalry();
   if (Math.random() < 0.5) tryAddFarm(era);
   for (let k = farms.length - 1; k >= 0; k--) {
     const f = farms[k];
     if (water[f.i] > 0.6 || lava[f.i] > 0.05) { scene.remove(f.mesh); farmed.delete(f.i); farms.splice(k, 1); }
     else f.mesh.position.y = solidH(f.i) * HS + 0.06;
   }
-  // wonders at population milestones (one per age from Ancient on)
-  if (era >= 2 && pop > 120 + era * 50 && !wonderEras.has(era)) { wonderEras.add(era); buildWonder(era); }
   updatePeople();
+  updateBoats(era);
 }
 
 //================================================================
@@ -1024,7 +1104,7 @@ function loop() {
   updateClouds();
   updateMeshes();
   updateCamera();
-  if (civEl) civEl.textContent = '🗓 ' + fmtYear(year) + ' · ' + ERAS[eraIndex(year)].name + ' · 👥 ' + Math.round(pop).toLocaleString() + ' · ' + BUILD;
+  if (civEl) civEl.textContent = '🗓 ' + fmtYear(year) + ' · ' + ERAS[eraIndex(year)].name + ' · 👥 ' + Math.round(totalPop()).toLocaleString() + (civs.length ? ' · 🏳️ ' + civs.length : '') + ' · ' + BUILD;
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
