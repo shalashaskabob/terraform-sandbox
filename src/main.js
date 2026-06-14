@@ -524,8 +524,8 @@ canvas.addEventListener('pointermove', e => {
     // Move tool: a single finger pans the camera across the terrain
     const dx = px - prev.x, dy = py - prev.y, k = cam.radius * 0.0016;
     const sinA = Math.sin(cam.az), cosA = Math.cos(cam.az);
-    cam.tx -= (dx * -sinA + dy * -cosA) * k;
-    cam.tz -= (dx * cosA + dy * -sinA) * k;
+    cam.tx -= (dx * sinA + dy * -cosA) * k;
+    cam.tz -= (dx * -cosA + dy * -sinA) * k;
     const lim = Math.max(W, H);
     cam.tx = clamp(cam.tx, -lim, lim);
     cam.tz = clamp(cam.tz, -lim, lim);
