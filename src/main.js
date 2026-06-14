@@ -3,7 +3,7 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
-const BUILD = 'v26';   // shown in the UI so you can confirm the live version
+const BUILD = 'v27';   // shown in the UI so you can confirm the live version
 
 //================================================================
 // Simulation fields
@@ -865,7 +865,10 @@ function stepCivilization() {
   if (pop <= 0 && buildings.length === 0) return;     // no society yet
   const era = eraIndex(year);
   if (pop > 0) {
-    year += 6 + era * era * 5;                          // time accelerates with progress
+    // advance the year so each era lasts roughly the same wall-clock time,
+    // regardless of how many calendar years it actually spans
+    const nextY = era < ERAS.length - 1 ? ERAS[era + 1].year : ERAS[era].year + 4000;
+    year += Math.max(1, (nextY - ERAS[era].year) / 200);
     const cap = Math.max(PER_BUILDING, landCapacity(era));
     pop += 0.03 * pop * (1 - pop / cap);
     pop = clamp(pop, 0, 1e6);
