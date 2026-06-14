@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0e1828"/>
+      <stop offset="1" stop-color="#0a1018"/>
+    </linearGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5fd0ff"/>
+      <stop offset="1" stop-color="#1e6ad2"/>
+    </linearGradient>
+    <linearGradient id="land" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#caa86a"/>
+      <stop offset="1" stop-color="#6b5836"/>
+    </linearGradient>
+    <linearGradient id="lava" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd24a"/>
+      <stop offset="1" stop-color="#ff4d1e"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff7a2c" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#ff7a2c" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
+  <!-- water basin -->
+  <path d="M0 330 C120 300 200 360 320 340 C400 326 470 350 512 330 L512 512 L0 512 Z" fill="url(#water)"/>
+  <!-- back ridge -->
+  <path d="M0 300 C90 200 170 250 250 180 C330 110 420 200 512 150 L512 360 C440 340 360 360 270 348 C180 336 90 360 0 350 Z" fill="url(#land)" opacity="0.92"/>
+  <!-- volcano -->
+  <circle cx="360" cy="150" r="120" fill="url(#glow)"/>
+  <path d="M300 300 L360 130 L420 300 Z" fill="#3a2f24"/>
+  <path d="M340 200 C350 170 370 170 380 200 C372 230 348 230 340 200 Z" fill="url(#lava)"/>
+  <path d="M360 200 C356 250 372 270 360 300 C350 270 364 250 360 200 Z" fill="url(#lava)" opacity="0.95"/>
+</svg>
