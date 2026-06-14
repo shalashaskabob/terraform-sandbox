@@ -227,9 +227,16 @@ function simulate() {
   frame++;
   steamFx.fill(0);
   // constant sources (springs / lava vents)
-  if (sources.size) for (const [idx, s] of sources) {
-    if (s.type === 'water') water[idx] += s.rate;
-    else { lava[idx] += s.rate; ltemp[idx] = 400; }
+  if (sources.size) {
+    let depleted = null;
+    for (const [idx, s] of sources) {
+      if (s.type === 'water') {
+        const give = Math.min(s.rate, s.remaining);
+        water[idx] += give; s.remaining -= give;
+        if (s.remaining <= 0) (depleted || (depleted = [])).push(idx);
+      } else { lava[idx] += s.rate; ltemp[idx] = 400; }
+    }
+    if (depleted) { for (const idx of depleted) sources.delete(idx); rebuildMarkers(); }
   }
   if (raining && frame % 2 === 0) { const drops = (W * H / 600) | 0; for (let k = 0; k < drops; k++) { const x = (Math.random() * W) | 0, y = (Math.random() * H) | 0; water[I(x, y)] += 0.6; } }
   stepLava();
@@ -391,10 +398,12 @@ function updateMeshes() {
 
   // source markers float at the surface
   let mi = 0;
-  for (const [idx] of sources) {
+  for (const [idx, s] of sources) {
     const m = markerGroup.children[mi++]; if (!m) break;
     const gx = idx % W, gy = (idx / W) | 0;
-    m.position.set(gx - W / 2, surf(idx) * HS + 1.4, gy - H / 2);
+    const frac = s.budget ? clamp(s.remaining / s.budget, 0.12, 1) : 1;  // shrink as it drains
+    m.scale.set(1, frac, 1);
+    m.position.set(gx - W / 2, surf(idx) * HS + 1.4 * frac, gy - H / 2);
   }
 }
 
@@ -467,7 +476,10 @@ function paintGrid(gx, gy) {
 function placeSpring(gx, gy) {
   const x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
   const i = I(x, y);
-  sources.set(i, { type: 'water', rate: 3.2 });
+  // finite reservoir sized by the brush: bigger brush = more water & faster flow
+  const rate = 1.5 + brush * 0.2;
+  const budget = brush * 120;
+  sources.set(i, { type: 'water', rate, remaining: budget, budget });
   rebuildMarkers();
 }
 
