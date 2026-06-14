@@ -56,9 +56,13 @@ function genTerrain() {
       h += valNoise((x + offs[o][0]) * oct[o].f, (y + offs[o][1]) * oct[o].f) * oct[o].a;
     const nx = (x / W - 0.5) * 2, ny = (y / H - 0.5) * 2;
     h -= (nx * nx + ny * ny) * 18;               // radial falloff -> island
-    const i = I(x, y), base = 22 + h;
-    rock[i] = clamp(base * 0.6, 1, 200);
-    sand[i] = clamp(base * 0.4, 0, 120);
+    const i = I(x, y);
+    const total = clamp(22 + h, 2, 220);
+    // a thin, erodible topsoil mantle sitting on a hard bedrock floor.
+    // water only carves the soil; bedrock resists, so canyons stop at rock.
+    const soil = clamp(9 + h * 0.16, 3, 24);
+    sand[i] = Math.min(soil, total - 1);
+    rock[i] = total - sand[i];
   }
   for (let k = 0; k < 6; k++) {
     const lx = (rnd() * W) | 0, ly = (rnd() * H) | 0;
@@ -73,8 +77,17 @@ function genTerrain() {
 // Simulation — pipe-model shallow water + hydraulic erosion
 //================================================================
 const dt = 0.10, G = 10, Lpipe = 1.0;
-const Kc = 0.55, Ks = 0.45, Kd = 0.45, Kevap = 0.010, FLUXDAMP = 0.985, MINW = 0.0008;
+const Kc = 0.45, Ks = 0.12, Kd = 0.10, Kevap = 0.006, FLUXDAMP = 0.985, MINW = 0.0008;
+const ERODE_MAX = 0.06;       // max terrain change per erosion pass (gentle)
+const EROSION_EVERY = 3;      // erosion runs only every N sim ticks (slow & watchable)
 let raining = false, paused = false;
+
+// Simulation speed control: water flows every tick, but the whole sim advances
+// on an accumulator so we can run it slowly enough to watch erosion happen.
+const BASE_RATE = 0.5;        // sim ticks per rendered frame at 1x
+const SPEEDS = [0.25, 0.5, 1, 2, 4];
+let simSpeed = 1;
+let simAcc = 0;
 const surf = i => rock[i] + sand[i] + lava[i];
 
 function stepWater() {
@@ -118,12 +131,11 @@ function stepErosion() {
     const speed = Math.sqrt(vx[i] * vx[i] + vy[i] * vy[i]);
     const C = Kc * sinT * speed * Math.min(1, water[i] * 3);
     if (C > sed[i]) {
-      let e = Ks * (C - sed[i]); if (e > 0.4) e = 0.4;
-      const fromSand = Math.min(sand[i], e); sand[i] -= fromSand;
-      const rem = e - fromSand; let total = fromSand;
-      if (rem > 0) { const fromRock = Math.min(rock[i], rem * 0.18); rock[i] -= fromRock; total += fromRock; }
-      sed[i] += total;
-    } else { let dp = Kd * (sed[i] - C); if (dp > 0.4) dp = 0.4; sand[i] += dp; sed[i] -= dp; }
+      // erode only the soil mantle — bedrock (rock) is the hard floor and never erodes
+      let e = Ks * (C - sed[i]); if (e > ERODE_MAX) e = ERODE_MAX;
+      const fromSand = Math.min(sand[i], e);
+      sand[i] -= fromSand; sed[i] += fromSand;
+    } else { let dp = Kd * (sed[i] - C); if (dp > ERODE_MAX) dp = ERODE_MAX; sand[i] += dp; sed[i] -= dp; }
   }
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = I(x, y);
@@ -135,6 +147,8 @@ function stepErosion() {
     tmp[i] = top + (bot - top) * fy;
   }
   sed.set(tmp);
+}
+function stepEvaporate() {
   const ev = 1 - Kevap * dt * (raining ? 0.4 : 1);
   for (let i = 0, n = W * H; i < n; i++) if (water[i] > 0) { water[i] *= ev; if (water[i] < 1e-5) water[i] = 0; }
 }
@@ -190,7 +204,8 @@ function simulate() {
   if (raining && frame % 2 === 0) { const drops = (W * H / 600) | 0; for (let k = 0; k < drops; k++) { const x = (Math.random() * W) | 0, y = (Math.random() * H) | 0; water[I(x, y)] += 0.6; } }
   stepLava();
   stepWater();
-  stepErosion();
+  if (frame % EROSION_EVERY === 0) stepErosion();
+  stepEvaporate();
   if (frame % 3 === 0) stepGrass();
 }
 
@@ -277,15 +292,20 @@ function updateMeshes() {
     const i = I(x, y), p = i * 3;
     const sh = solidH(i), st = surf(i), w = water[i], lv = lava[i];
 
-    // ---- terrain height + albedo + analytic normal ----
+    // ---- terrain height + layered geology albedo + analytic normal ----
     tp[p + 1] = sh * HS;
-    let r, g, b; const elev = sh, sandRatio = sand[i] / (sh + 0.001);
-    if (elev < 14) { r = 92; g = 80; b = 64; }
-    else if (elev < 20) { r = 196; g = 176; b = 120; }
-    else if (elev < 46) { const t = (elev - 20) / 26; r = 176 - 60 * t; g = 158 - 58 * t; b = 110 - 44 * t; }
-    else if (elev < 70) { const t = (elev - 46) / 24; r = 116 - 40 * t; g = 100 - 30 * t; b = 66 - 16 * t; }
-    else { const t = clamp((elev - 70) / 30, 0, 1); r = 76 + 150 * t; g = 70 + 150 * t; b = 58 + 160 * t; }
-    r += sandRatio * 22; g += sandRatio * 16;
+    let r, g, b;
+    const soilMix = clamp(sand[i] / 7, 0, 1);                 // 0 = bare bedrock, 1 = full soil
+    // bedrock with sedimentary strata banding (shows where water has cut down to rock)
+    const strata = 0.80 + 0.20 * Math.sin(rock[i] * 0.5);
+    const rr = 104 * strata, rg = 98 * strata, rb = 90 * strata;
+    // brown topsoil over the bedrock
+    r = rr + (150 - rr) * soilMix; g = rg + (116 - rg) * soilMix; b = rb + (74 - rb) * soilMix;
+    // snowy peaks
+    if (sh > 76) { const t = clamp((sh - 76) / 26, 0, 1); r += (236 - r) * t; g += (240 - g) * t; b += (247 - b) * t; }
+    // sandy shoreline near the waterline
+    if (sh < 19) { const t = clamp((19 - sh) / 9, 0, 1); r = r * (1 - t) + 198 * t; g = g * (1 - t) + 178 * t; b = b * (1 - t) + 122 * t; }
+    // vegetation
     const gr = grass[i];
     if (gr > 0) { r = r * (1 - gr) + 58 * gr; g = g * (1 - gr) + 150 * gr; b = b * (1 - gr) + 62 * gr; }
     tc[p] = r / 255; tc[p + 1] = g / 255; tc[p + 2] = b / 255;
@@ -488,6 +508,12 @@ const pauseBtn = document.getElementById('pauseBtn');
 pauseBtn.addEventListener('click', function () { paused = !paused; this.textContent = paused ? '▶' : '⏸'; this.classList.toggle('on', paused); });
 const rainBtn = document.getElementById('rainBtn');
 rainBtn.addEventListener('click', function () { raining = !raining; this.classList.toggle('on', raining); });
+const speedBtn = document.getElementById('speedBtn');
+speedBtn.textContent = simSpeed + '×';
+speedBtn.addEventListener('click', function () {
+  simSpeed = SPEEDS[(SPEEDS.indexOf(simSpeed) + 1) % SPEEDS.length];
+  this.textContent = simSpeed + '×';
+});
 document.getElementById('resetBtn').addEventListener('click', () => { seed = (Math.random() * 1e9) | 0; genTerrain(); rebuildMarkers(); });
 
 const toast = document.getElementById('toast'), badge = document.getElementById('badge');
@@ -507,7 +533,12 @@ function loop() {
     const g = screenToGrid(p.x, p.y);
     if (g) paintGrid(g[0], g[1]);
   }
-  if (!paused) simulate();
+  if (!paused) {
+    simAcc += BASE_RATE * simSpeed;
+    let n = 0;
+    while (simAcc >= 1 && n < 4) { simulate(); simAcc -= 1; n++; }
+    if (simAcc > 1) simAcc = 1;
+  }
   updateMeshes();
   updateCamera();
   renderer.render(scene, camera);
