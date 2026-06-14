@@ -3,7 +3,7 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
-const BUILD = 'v25';   // shown in the UI so you can confirm the live version
+const BUILD = 'v26';   // shown in the UI so you can confirm the live version
 
 //================================================================
 // Simulation fields
@@ -729,19 +729,25 @@ function resetCivilization() {
   buildings.length = 0; people.length = 0; pop = 0; year = -10000;
 }
 
-function buildable(x, y) {
+// Is a cell habitable at all (dry-ish land, not lava, not a cliff)?
+function buildableManual(x, y) {
   if (!inb(x, y)) return false;
   const i = I(x, y);
-  // keep buildings spaced apart so towns spread out instead of overlapping
-  for (let sy = -SPACING; sy <= SPACING; sy++) for (let sx = -SPACING; sx <= SPACING; sx++) {
-    const nx = x + sx, ny = y + sy;
-    if (nx >= 0 && ny >= 0 && nx < W && ny < H && occupied[ny * W + nx]) return false;
-  }
+  if (occupied[i]) return false;
   if (water[i] > 0.3 || lava[i] > 0.02) return false;
   if (solidH(i) < BASEMENT + 3) return false;
   const hl = solidH(I(Math.max(0, x - 1), y)), hr = solidH(I(Math.min(W - 1, x + 1), y));
   const hu = solidH(I(x, Math.max(0, y - 1))), hd = solidH(I(x, Math.min(H - 1, y + 1)));
   if (Math.max(Math.abs(hl - hr), Math.abs(hu - hd)) > 6) return false;   // too steep
+  return true;
+}
+// Auto-growth also requires spacing so towns spread out instead of overlapping.
+function buildable(x, y) {
+  if (!buildableManual(x, y)) return false;
+  for (let sy = -SPACING; sy <= SPACING; sy++) for (let sx = -SPACING; sx <= SPACING; sx++) {
+    const nx = x + sx, ny = y + sy;
+    if (nx >= 0 && ny >= 0 && nx < W && ny < H && occupied[ny * W + nx]) return false;
+  }
   return true;
 }
 // Distinct architecture per age, built so the base sits at y = 0.
@@ -829,14 +835,15 @@ function destroyBuildingsNear(cx, cz, R) {
 }
 function foundSettlement(gx, gy) {
   let x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
-  if (!buildable(x, y)) {                 // snap to the nearest suitable spot
+  // place exactly where tapped; only nudge by 1 cell if that exact spot is
+  // water/lava/cliff/occupied
+  if (!buildableManual(x, y)) {
     let best = null;
-    for (let r = 1; r <= 6 && !best; r++)
-      for (let dy = -r; dy <= r && !best; dy++) for (let dx = -r; dx <= r; dx++)
-        if (buildable(x + dx, y + dy)) { best = [x + dx, y + dy]; break; }
+    for (let dy = -1; dy <= 1 && !best; dy++) for (let dx = -1; dx <= 1; dx++)
+      if (buildableManual(x + dx, y + dy)) { best = [x + dx, y + dy]; break; }
     if (best) { x = best[0]; y = best[1]; }
   }
-  if (buildable(x, y)) { pop += PER_BUILDING + 8; addBuilding(x, y, eraIndex(year)); }
+  if (buildableManual(x, y)) { pop += PER_BUILDING + 8; addBuilding(x, y, eraIndex(year)); }
   else pop += 8;
 }
 function foundBuilding(era) {
