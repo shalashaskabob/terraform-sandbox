@@ -1,8 +1,11 @@
-# 🌍 Terraform — Water & Erosion Sandbox
+# 🌍 Terraform — 3D Water & Erosion Sandbox
 
 A mobile-first physics sandbox inspired by Ubisoft's **From Dust**. Sculpt a
-living landscape with your finger and watch it come to life with **realistic
-water flow, hydraulic erosion, and lava that cools into rock**.
+living **3D** landscape with your finger and watch it come to life with
+**realistic water flow, hydraulic erosion, and lava that cools into rock** —
+rendered as a real lit, orbitable terrain with Three.js (WebGL).
+
+**Controls:** **1 finger** sculpts · **2 fingers** orbit & pinch-zoom the camera.
 
 It's a single self-contained web app — no install, no account. Open it on your
 phone and tap **Add to Home Screen** to run it like a native app (it works
@@ -28,7 +31,8 @@ offline via a service worker / PWA).
 | Tool | What it does |
 |------|--------------|
 | ⛰ Land | Raise erodible soil/sand — build mountains |
-| 💧 Water | Pour water (hold to make a spring) |
+| 💧 Water | Pour water (hold to keep pouring) |
+| ⛲ Spring | Tap to drop a **constant water source** that flows forever |
 | 🌋 Lava | Pour lava that flows and cools to rock |
 | 🪨 Rock | Raise hard, slow-to-erode bedrock |
 | 🌱 Plant | Seed vegetation near the shore |
