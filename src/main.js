@@ -267,11 +267,15 @@ function initThree() {
 }
 
 // camera as orbit around terrain centre
-const cam = { az: 0.7, polar: 0.95, radius: 160, ty: 8 };
+const cam = { az: 0.7, polar: 0.95, radius: 160, ty: 8, tx: 0, tz: 0 };
 function updateCamera() {
   const r = cam.radius, sp = Math.sin(cam.polar);
-  camera.position.set(Math.cos(cam.az) * sp * r, Math.cos(cam.polar) * r, Math.sin(cam.az) * sp * r);
-  camera.lookAt(0, cam.ty, 0);
+  camera.position.set(
+    cam.tx + Math.cos(cam.az) * sp * r,
+    cam.ty + Math.cos(cam.polar) * r,
+    cam.tz + Math.sin(cam.az) * sp * r
+  );
+  camera.lookAt(cam.tx, cam.ty, cam.tz);
 }
 
 function buildMeshes() {
@@ -517,9 +521,14 @@ canvas.addEventListener('pointermove', e => {
     }
     gesture = s;
   } else if (tool === T_HAND) {
-    // Move tool: a single finger orbits the camera instead of sculpting
-    cam.az -= (px - prev.x) * 0.006;
-    cam.polar = clamp(cam.polar - (py - prev.y) * 0.006, 0.15, 1.45);
+    // Move tool: a single finger pans the camera across the terrain
+    const dx = px - prev.x, dy = py - prev.y, k = cam.radius * 0.0016;
+    const sinA = Math.sin(cam.az), cosA = Math.cos(cam.az);
+    cam.tx -= (dx * -sinA + dy * -cosA) * k;
+    cam.tz -= (dx * cosA + dy * -sinA) * k;
+    const lim = Math.max(W, H);
+    cam.tx = clamp(cam.tx, -lim, lim);
+    cam.tz = clamp(cam.tz, -lim, lim);
   }
   e.preventDefault();
 }, { passive: false });
@@ -556,7 +565,7 @@ speedBtn.addEventListener('click', function () {
   simSpeed = SPEEDS[(SPEEDS.indexOf(simSpeed) + 1) % SPEEDS.length];
   this.textContent = simSpeed + '×';
 });
-document.getElementById('resetBtn').addEventListener('click', () => { seed = (Math.random() * 1e9) | 0; genTerrain(); rebuildMarkers(); });
+document.getElementById('resetBtn').addEventListener('click', () => { seed = (Math.random() * 1e9) | 0; genTerrain(); rebuildMarkers(); cam.tx = 0; cam.tz = 0; });
 
 const toast = document.getElementById('toast'), badge = document.getElementById('badge');
 function showToast() { toast.classList.add('show'); }
