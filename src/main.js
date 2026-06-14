@@ -694,11 +694,15 @@ const ERAS = [
   { name: 'Industrial',  year: 1760,   col: 0x8a3f30, h: 4.2, w: 1.1 },
   { name: 'Modern',      year: 1950,   col: 0x7fb0dc, h: 7.0, w: 0.85 },
 ];
-const BUILD_CAP = 320, PER_BUILDING = 12;
-let pop = 0, year = -10000, civInited = false;
+const BUILD_CAP = 260, PER_BUILDING = 12, PEOPLE_CAP = 140;
+let pop = 0, year = -10000;
 const buildings = [];
-const bldgGeo = new THREE.BoxGeometry(1, 1, 1);
-let eraMats = null;
+const people = [];
+const G_BOX = new THREE.BoxGeometry(1, 1, 1);
+const G_CONE = new THREE.ConeGeometry(0.7, 1, 6);
+const G_CYL = new THREE.CylinderGeometry(0.55, 0.7, 1, 6);
+const G_PERSON = new THREE.ConeGeometry(0.34, 1.1, 5);
+let eraMats = null, roofMat = null, peopleMat = null;
 
 function eraIndex(y) { let e = 0; for (let k = 0; k < ERAS.length; k++) if (y >= ERAS[k].year) e = k; return e; }
 function fmtYear(y) { const v = Math.round(y); return v < 0 ? (-v) + ' BCE' : v + ' CE'; }
@@ -710,10 +714,13 @@ function ensureCivAssets() {
     metalness: e.name === 'Modern' ? 0.45 : 0.0,
     emissive: e.name === 'Modern' ? 0x10202e : 0x000000,
   }));
+  roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4036, roughness: 0.9 });
+  peopleMat = new THREE.MeshStandardMaterial({ color: 0xf4cda4, roughness: 0.7, emissive: 0x3a2a18, emissiveIntensity: 0.35 });
 }
 function resetCivilization() {
-  for (const b of buildings) if (b.mesh) scene.remove(b.mesh);
-  buildings.length = 0; pop = 0; year = -10000;
+  for (const b of buildings) if (b.group) scene.remove(b.group);
+  for (const p of people) if (p.mesh) scene.remove(p.mesh);
+  buildings.length = 0; people.length = 0; pop = 0; year = -10000;
 }
 
 function buildable(x, y) {
@@ -727,27 +734,60 @@ function buildable(x, y) {
   if (Math.max(Math.abs(hl - hr), Math.abs(hu - hd)) > 6) return false;   // too steep
   return true;
 }
-function seatBuilding(b) {
-  b.mesh.position.set(b.gx - W / 2, solidH(I(b.gx, b.gy)) * HS + b.hWorld / 2, b.gy - H / 2);
+// Distinct architecture per age, built so the base sits at y = 0.
+function buildMeshForEra(era, rnd) {
+  const g = new THREE.Group(), mat = eraMats[era], s = 1 + rnd * 0.5;
+  if (era === 0) {                         // Prehistoric: tent/hut
+    const w = 1.8 * s, h = 1.5 * s; const m = new THREE.Mesh(G_CONE, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
+  } else if (era === 1) {                  // Stone Age: round hut + thatched cone roof
+    const w = 1.9 * s, h = 1.7 * s; const base = new THREE.Mesh(G_CYL, mat); base.scale.set(w, h, w); base.position.y = h / 2; g.add(base);
+    const roof = new THREE.Mesh(G_CONE, roofMat); roof.scale.set(w * 1.15, h * 0.85, w * 1.15); roof.position.y = h + h * 0.42; g.add(roof);
+  } else if (era === 2) {                   // Ancient: stone block
+    const w = 2.3 * s, h = 2.5 * s; const m = new THREE.Mesh(G_BOX, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
+  } else if (era === 3) {                   // Medieval: tower with spire
+    const w = 1.8 * s, h = 3.7 * s; const base = new THREE.Mesh(G_BOX, mat); base.scale.set(w, h, w); base.position.y = h / 2; g.add(base);
+    const roof = new THREE.Mesh(G_CONE, roofMat); roof.scale.set(w * 1.25, h * 0.55, w * 1.25); roof.position.y = h + h * 0.24; g.add(roof);
+  } else if (era === 4) {                   // Industrial: brick block + chimney
+    const w = 2.4 * s, h = 3.3 * s; const m = new THREE.Mesh(G_BOX, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
+    const ch = new THREE.Mesh(G_BOX, roofMat); ch.scale.set(w * 0.22, h * 0.95, w * 0.22); ch.position.set(w * 0.3, h + h * 0.42, w * 0.3); g.add(ch);
+  } else {                                  // Modern: glass skyscraper + antenna
+    const w = 1.8 * s, h = 8 * s; const m = new THREE.Mesh(G_BOX, mat); m.scale.set(w, h, w); m.position.y = h / 2; g.add(m);
+    const ant = new THREE.Mesh(G_BOX, roofMat); ant.scale.set(w * 0.12, h * 0.18, w * 0.12); ant.position.y = h + h * 0.09; g.add(ant);
+  }
+  return g;
 }
+function seatBuilding(b) { b.group.position.set(b.gx - W / 2, solidH(I(b.gx, b.gy)) * HS, b.gy - H / 2); }
 function styleBuilding(b, era) {
-  b.tier = era; b.mesh.material = eraMats[era];
-  const E = ERAS[era];
-  const w = 0.7 * E.w;
-  b.hWorld = E.h * 1.8 * (0.7 + b.rnd * 0.7);
-  b.mesh.scale.set(w, b.hWorld, w);
+  if (b.group) scene.remove(b.group);
+  b.tier = era; b.group = buildMeshForEra(era, b.rnd); scene.add(b.group); seatBuilding(b);
 }
 function addBuilding(x, y, era) {
   if (buildings.length >= BUILD_CAP) return false;
   ensureCivAssets();
-  const b = { gx: x, gy: y, mesh: new THREE.Mesh(bldgGeo, eraMats[era]), baseH: solidH(I(x, y)), rnd: Math.random() };
-  scene.add(b.mesh); occupied[I(x, y)] = 1; buildings.push(b);
-  styleBuilding(b, era); seatBuilding(b);
+  const b = { gx: x, gy: y, group: null, baseH: solidH(I(x, y)), rnd: Math.random(), tier: -1, dead: false };
+  occupied[I(x, y)] = 1; buildings.push(b); styleBuilding(b, era);
   return true;
 }
 function destroyBuilding(k) {
-  const b = buildings[k]; scene.remove(b.mesh); occupied[I(b.gx, b.gy)] = 0;
-  buildings.splice(k, 1); pop = Math.max(0, pop - PER_BUILDING);
+  const b = buildings[k]; b.dead = true; if (b.group) scene.remove(b.group);
+  occupied[I(b.gx, b.gy)] = 0; buildings.splice(k, 1); pop = Math.max(0, pop - PER_BUILDING);
+}
+// Little person figures milling around the towns
+function updatePeople() {
+  ensureCivAssets();
+  const want = clamp(Math.floor(pop / 3), 0, PEOPLE_CAP);
+  while (people.length < want && buildings.length) {
+    const home = buildings[(Math.random() * buildings.length) | 0];
+    const m = new THREE.Mesh(G_PERSON, peopleMat); scene.add(m);
+    people.push({ mesh: m, home, ox: (Math.random() - 0.5) * 3.4, oz: (Math.random() - 0.5) * 3.4 });
+  }
+  while (people.length > want) { const p = people.pop(); scene.remove(p.mesh); }
+  for (const p of people) {
+    if (!p.home || p.home.dead) p.home = buildings.length ? buildings[(Math.random() * buildings.length) | 0] : null;
+    if (!p.home) continue;
+    const xg = clamp(p.home.gx + p.ox, 0, W - 1), zg = clamp(p.home.gy + p.oz, 0, H - 1);
+    p.mesh.position.set(xg - W / 2, solidH(I(xg | 0, zg | 0)) * HS + 0.55, zg - H / 2);
+  }
 }
 function destroyBuildingsNear(cx, cz, R) {
   for (let k = buildings.length - 1; k >= 0; k--) {
@@ -756,9 +796,16 @@ function destroyBuildingsNear(cx, cz, R) {
   }
 }
 function foundSettlement(gx, gy) {
-  const x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
-  if (buildable(x, y)) { pop += PER_BUILDING + 4; addBuilding(x, y, eraIndex(year)); }
-  else pop += 6;   // settlers arrive; growth will build on nearby suitable land
+  let x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
+  if (!buildable(x, y)) {                 // snap to the nearest suitable spot
+    let best = null;
+    for (let r = 1; r <= 6 && !best; r++)
+      for (let dy = -r; dy <= r && !best; dy++) for (let dx = -r; dx <= r; dx++)
+        if (buildable(x + dx, y + dy)) { best = [x + dx, y + dy]; break; }
+    if (best) { x = best[0]; y = best[1]; }
+  }
+  if (buildable(x, y)) { pop += PER_BUILDING + 8; addBuilding(x, y, eraIndex(year)); }
+  else pop += 8;
 }
 function foundBuilding(era) {
   for (let a = 0; a < 14; a++) {
@@ -795,6 +842,7 @@ function stepCivilization() {
     if (b.tier !== era) styleBuilding(b, era);
     seatBuilding(b);
   }
+  updatePeople();
 }
 
 //================================================================
