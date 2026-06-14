@@ -84,7 +84,11 @@
     #toast.show{opacity:1;}
     #toast b{color:var(--accent);}
     #toast .hint{margin-top:9px;color:var(--muted);font-size:11px;}
-    #badge{position:absolute;top:calc(env(safe-area-inset-top) + 52px);left:10px;z-index:4;
+    #civ{position:absolute;top:calc(env(safe-area-inset-top) + 52px);left:10px;z-index:4;
+      font-size:11px;font-weight:700;color:#eaf1fb;background:var(--panel);border:1px solid var(--stroke);
+      border-radius:10px;padding:5px 9px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      pointer-events:none;font-variant-numeric:tabular-nums;}
+    #badge{position:absolute;top:calc(env(safe-area-inset-top) + 86px);left:10px;z-index:4;
       font-size:10px;color:var(--muted);background:var(--panel);border:1px solid var(--stroke);
       border-radius:10px;padding:4px 8px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       pointer-events:none;}
@@ -102,6 +106,7 @@
       <div class="iconbtn" id="pauseBtn" title="Pause">⏸</div>
       <div class="iconbtn" id="resetBtn" title="New land">⟳</div>
     </div>
+    <div id="civ">🗓 10000 BCE · Prehistoric · 👥 0</div>
     <div id="badge">Move: 1 finger pans · 2 fingers rotate &amp; zoom</div>
     <div id="controls">
       <div id="toolrow">
@@ -115,7 +120,7 @@
     </div>
     <div id="toast">
       <div><b>Terraform 3D</b> — sculpt a living landscape.</div>
-      <div>Use <b>Move</b> (1 finger orbits) or <b>2 fingers</b> to look around. Drop a <b>Spring</b> for endless water and watch rivers carve through soil into the layered <b>bedrock strata</b>. Tap <b>Meteor</b> to call down an asteroid and crater the world.</div>
+      <div>Tap <b>People</b> to found a society that grows and builds through the ages (watch the <b>year</b> climb from prehistory to modern). Shape the land, drop a <b>Spring</b>, carve canyons into the <b>strata</b> — and unleash a <b>Meteor</b>: floods, erosion and impacts will wipe out towns. <b>Move</b>: 1 finger pans, 2 fingers rotate/zoom.</div>
       <div class="hint">Tap the <b>1×</b> button to change speed · ⟳ makes new land · Tap to dismiss</div>
     </div>
   </div>

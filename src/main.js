@@ -11,7 +11,7 @@ let cssW = 0, cssH = 0, cellPx = 6;
 const HS = 0.5;                   // world height units per terrain unit
 
 let rock, sand, water, sed, lava, ltemp, grass;
-let fL, fR, fU, fD, vx, vy, tmp, steamFx;
+let fL, fR, fU, fD, vx, vy, tmp, steamFx, occupied;
 const sources = new Map();        // grid index -> { type, rate }
 
 const I = (x, y) => y * W + x;
@@ -25,6 +25,7 @@ function allocFields() {
   sed = new Float32Array(N); lava = new Float32Array(N); ltemp = new Float32Array(N); grass = new Float32Array(N);
   fL = new Float32Array(N); fR = new Float32Array(N); fU = new Float32Array(N); fD = new Float32Array(N);
   vx = new Float32Array(N); vy = new Float32Array(N); tmp = new Float32Array(N); steamFx = new Float32Array(N);
+  occupied = new Uint8Array(N);
   sources.clear();
 }
 
@@ -46,7 +47,9 @@ function genTerrain() {
   rock.fill(0); sand.fill(0); water.fill(0); sed.fill(0);
   lava.fill(0); ltemp.fill(0); grass.fill(0);
   fL.fill(0); fR.fill(0); fU.fill(0); fD.fill(0); vx.fill(0); vy.fill(0);
+  if (occupied) occupied.fill(0);
   sources.clear();
+  resetCivilization();
 
   const oct = [{ f: 0.012, a: 32 }, { f: 0.025, a: 17 }, { f: 0.05, a: 9 }, { f: 0.1, a: 4 }];
   const offs = oct.map(() => [rnd() * 1000, rnd() * 1000]);
@@ -83,6 +86,7 @@ const Kc = 0.45, Ks = 0.12, Kd = 0.10, Kevap = 0.006, FLUXDAMP = 0.985, MINW = 0
 const ERODE_MAX = 0.06;       // max terrain change per erosion pass (gentle)
 const EROSION_EVERY = 3;      // erosion runs only every N sim ticks (slow & watchable)
 const BASEMENT = 12;          // bedrock below this elevation never erodes (map floor)
+const CIV_EVERY = 4;          // civilization updates every N sim ticks
 let raining = false, paused = false;
 
 // Geological strata colours (top layer first), revealed as canyons cut down.
@@ -244,6 +248,7 @@ function simulate() {
   if (frame % EROSION_EVERY === 0) stepErosion();
   stepEvaporate();
   if (frame % 3 === 0) stepGrass();
+  if (frame % CIV_EVERY === 0) stepCivilization();
 }
 
 //================================================================
@@ -436,9 +441,10 @@ function resize() {
 //================================================================
 // Tools / painting
 //================================================================
-const T_LAND = 0, T_WATER = 1, T_LAVA = 2, T_ROCK = 3, T_PLANT = 4, T_SPRING = 5, T_SCOOP = 6, T_HAND = 7, T_METEOR = 8;
+const T_LAND = 0, T_WATER = 1, T_LAVA = 2, T_ROCK = 3, T_PLANT = 4, T_SPRING = 5, T_SCOOP = 6, T_HAND = 7, T_METEOR = 8, T_PEOPLE = 9;
 const TOOLS = [
   { id: T_HAND, name: 'Move', ic: '✋' },
+  { id: T_PEOPLE, name: 'People', ic: '🧑‍🤝‍🧑' },
   { id: T_LAND, name: 'Land', ic: '⛰' },
   { id: T_WATER, name: 'Water', ic: '💧' },
   { id: T_SPRING, name: 'Spring', ic: '⛲' },
@@ -515,6 +521,7 @@ canvas.addEventListener('pointerdown', e => {
   else if (pointers.size === 1) {
     if (tool === T_SPRING) { const g = screenToGrid(e.clientX, e.clientY); if (g) placeSpring(g[0], g[1]); }
     else if (tool === T_METEOR) { const g = screenToGrid(e.clientX, e.clientY); if (g) callAsteroid(g[0], g[1]); }
+    else if (tool === T_PEOPLE) { const g = screenToGrid(e.clientX, e.clientY); if (g) foundSettlement(g[0], g[1]); }
   }
   e.preventDefault();
 }, { passive: false });
@@ -556,7 +563,7 @@ canvas.addEventListener('pointercancel', endPointer);
 //================================================================
 // UI
 //================================================================
-const toolsEl = document.getElementById('tools'), curname = document.getElementById('curname');
+const toolsEl = document.getElementById('tools'), curname = document.getElementById('curname'), civEl = document.getElementById('civ');
 const chips = [];
 TOOLS.forEach(t => {
   const c = document.createElement('div'); c.className = 'chip';
@@ -638,6 +645,7 @@ function impact(cx, cz, R) {
       water[i] += 1.5 * Math.max(0, 1 - Math.abs(dist - R) / R);
     }
   }
+  destroyBuildingsNear(cx, cz, rimR);
   spawnFlash(cx, cz, R);
 }
 
@@ -675,11 +683,126 @@ function updateEffects() {
 }
 
 //================================================================
+// Civilization — people settle, grow, and build through the ages,
+// while floods, erosion and meteors wipe them out
+//================================================================
+const ERAS = [
+  { name: 'Prehistoric', year: -10000, col: 0x6f4a2c, h: 1.3, w: 0.9 },
+  { name: 'Stone Age',   year: -8000,  col: 0x8c7a55, h: 1.7, w: 1.0 },
+  { name: 'Ancient',     year: -3000,  col: 0xcdb888, h: 2.4, w: 1.1 },
+  { name: 'Medieval',    year: 500,    col: 0x9b8e7c, h: 3.2, w: 1.0 },
+  { name: 'Industrial',  year: 1760,   col: 0x8a3f30, h: 4.2, w: 1.1 },
+  { name: 'Modern',      year: 1950,   col: 0x7fb0dc, h: 7.0, w: 0.85 },
+];
+const BUILD_CAP = 320, PER_BUILDING = 12;
+let pop = 0, year = -10000, civInited = false;
+const buildings = [];
+const bldgGeo = new THREE.BoxGeometry(1, 1, 1);
+let eraMats = null;
+
+function eraIndex(y) { let e = 0; for (let k = 0; k < ERAS.length; k++) if (y >= ERAS[k].year) e = k; return e; }
+function fmtYear(y) { const v = Math.round(y); return v < 0 ? (-v) + ' BCE' : v + ' CE'; }
+
+function ensureCivAssets() {
+  if (eraMats) return;
+  eraMats = ERAS.map((e) => new THREE.MeshStandardMaterial({
+    color: e.col, roughness: e.name === 'Modern' ? 0.25 : 0.85,
+    metalness: e.name === 'Modern' ? 0.45 : 0.0,
+    emissive: e.name === 'Modern' ? 0x10202e : 0x000000,
+  }));
+}
+function resetCivilization() {
+  for (const b of buildings) if (b.mesh) scene.remove(b.mesh);
+  buildings.length = 0; pop = 0; year = -10000;
+}
+
+function buildable(x, y) {
+  if (!inb(x, y)) return false;
+  const i = I(x, y);
+  if (occupied[i]) return false;
+  if (water[i] > 0.3 || lava[i] > 0.02) return false;
+  if (solidH(i) < BASEMENT + 3) return false;
+  const hl = solidH(I(Math.max(0, x - 1), y)), hr = solidH(I(Math.min(W - 1, x + 1), y));
+  const hu = solidH(I(x, Math.max(0, y - 1))), hd = solidH(I(x, Math.min(H - 1, y + 1)));
+  if (Math.max(Math.abs(hl - hr), Math.abs(hu - hd)) > 6) return false;   // too steep
+  return true;
+}
+function seatBuilding(b) {
+  b.mesh.position.set(b.gx - W / 2, solidH(I(b.gx, b.gy)) * HS + b.hWorld / 2, b.gy - H / 2);
+}
+function styleBuilding(b, era) {
+  b.tier = era; b.mesh.material = eraMats[era];
+  const E = ERAS[era];
+  const w = 0.7 * E.w;
+  b.hWorld = E.h * 1.8 * (0.7 + b.rnd * 0.7);
+  b.mesh.scale.set(w, b.hWorld, w);
+}
+function addBuilding(x, y, era) {
+  if (buildings.length >= BUILD_CAP) return false;
+  ensureCivAssets();
+  const b = { gx: x, gy: y, mesh: new THREE.Mesh(bldgGeo, eraMats[era]), baseH: solidH(I(x, y)), rnd: Math.random() };
+  scene.add(b.mesh); occupied[I(x, y)] = 1; buildings.push(b);
+  styleBuilding(b, era); seatBuilding(b);
+  return true;
+}
+function destroyBuilding(k) {
+  const b = buildings[k]; scene.remove(b.mesh); occupied[I(b.gx, b.gy)] = 0;
+  buildings.splice(k, 1); pop = Math.max(0, pop - PER_BUILDING);
+}
+function destroyBuildingsNear(cx, cz, R) {
+  for (let k = buildings.length - 1; k >= 0; k--) {
+    const b = buildings[k];
+    if (Math.hypot(b.gx - cx, b.gy - cz) <= R) destroyBuilding(k);
+  }
+}
+function foundSettlement(gx, gy) {
+  const x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
+  if (buildable(x, y)) { pop += PER_BUILDING + 4; addBuilding(x, y, eraIndex(year)); }
+  else pop += 6;   // settlers arrive; growth will build on nearby suitable land
+}
+function foundBuilding(era) {
+  for (let a = 0; a < 14; a++) {
+    let bx, by;
+    if (buildings.length) { const b = buildings[(Math.random() * buildings.length) | 0]; bx = b.gx + ((Math.random() * 9) | 0) - 4; by = b.gy + ((Math.random() * 9) | 0) - 4; }
+    else { bx = (Math.random() * W) | 0; by = (Math.random() * H) | 0; }
+    if (buildable(bx, by)) return addBuilding(bx, by, era);
+  }
+  return false;
+}
+function landCapacity(era) {
+  let hab = 0;
+  for (let i = 0, n = W * H; i < n; i += 3)
+    if (water[i] < 0.3 && lava[i] < 0.02 && (rock[i] + sand[i]) > BASEMENT + 3) hab++;
+  return hab * 3 * (era + 1) * 0.45;
+}
+function stepCivilization() {
+  if (pop <= 0 && buildings.length === 0) return;     // no society yet
+  const era = eraIndex(year);
+  if (pop > 0) {
+    year += 6 + era * era * 5;                          // time accelerates with progress
+    const cap = Math.max(PER_BUILDING, landCapacity(era));
+    pop += 0.03 * pop * (1 - pop / cap);
+    pop = clamp(pop, 0, 1e6);
+  }
+  // expand: build up to the population's needs
+  const target = Math.min(BUILD_CAP, Math.floor(pop / PER_BUILDING));
+  let tries = 6;
+  while (buildings.length < target && tries-- > 0) { if (!foundBuilding(era)) break; }
+  // disasters + upgrade existing buildings to the current age
+  for (let k = buildings.length - 1; k >= 0; k--) {
+    const b = buildings[k], i = I(b.gx, b.gy);
+    if (water[i] > 0.8 || lava[i] > 0.05 || solidH(i) < b.baseH - 4) { destroyBuilding(k); continue; }
+    if (b.tier !== era) styleBuilding(b, era);
+    seatBuilding(b);
+  }
+}
+
+//================================================================
 // Loop
 //================================================================
 function loop() {
   // continuous sculpting while a single finger is held (springs are discrete)
-  if (pointers.size === 1 && tool !== T_SPRING && tool !== T_HAND && tool !== T_METEOR) {
+  if (pointers.size === 1 && tool !== T_SPRING && tool !== T_HAND && tool !== T_METEOR && tool !== T_PEOPLE) {
     const p = [...pointers.values()][0];
     const g = screenToGrid(p.x, p.y);
     if (g) paintGrid(g[0], g[1]);
@@ -693,6 +816,7 @@ function loop() {
   updateEffects();
   updateMeshes();
   updateCamera();
+  if (civEl) civEl.textContent = '🗓 ' + fmtYear(year) + ' · ' + ERAS[eraIndex(year)].name + ' · 👥 ' + Math.round(pop).toLocaleString();
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
