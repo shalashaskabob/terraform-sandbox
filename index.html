@@ -92,6 +92,12 @@
       font-size:10px;color:var(--muted);background:var(--panel);border:1px solid var(--stroke);
       border-radius:10px;padding:4px 8px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
       pointer-events:none;}
+    #feed{position:absolute;top:calc(env(safe-area-inset-top) + 116px);left:10px;z-index:4;
+      display:flex;flex-direction:column;gap:4px;pointer-events:none;max-width:74%;}
+    .feedmsg{font-size:11px;color:#eaf1fb;background:var(--panel);border:1px solid var(--stroke);
+      border-radius:9px;padding:4px 9px;opacity:0;transform:translateY(-4px);
+      transition:opacity .25s,transform .25s;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+    .feedmsg.show{opacity:1;transform:none;}
   </style>
 </head>
 <body>
@@ -108,6 +114,7 @@
     </div>
     <div id="civ">🗓 10000 BCE · Prehistoric · 👥 0</div>
     <div id="badge">Move: 1 finger pans · 2 fingers rotate &amp; zoom</div>
+    <div id="feed"></div>
     <div id="controls">
       <div id="toolrow">
         <div id="brushwrap">

@@ -3,7 +3,7 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
-const BUILD = 'v27';   // shown in the UI so you can confirm the live version
+const BUILD = 'v28';   // shown in the UI so you can confirm the live version
 
 //================================================================
 // Simulation fields
@@ -257,7 +257,9 @@ function simulate() {
 // Three.js scene
 //================================================================
 const canvas = document.getElementById('c');
-let renderer, scene, camera;
+let renderer, scene, camera, sun, hemi;
+let tod = 0.30;                   // time of day (0..1)
+const clouds = [];
 let terrMesh, watMesh, lavMesh;
 let terrGeo, watGeo, lavGeo;
 const markerGroup = new THREE.Group();
@@ -267,18 +269,42 @@ function initThree() {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   scene = new THREE.Scene();
-  const sky = new THREE.Color(0x8fb4e6);
-  scene.background = sky;
+  scene.background = new THREE.Color(0x8fb4e6);
 
-  const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4a3b2a, 0.85);
+  hemi = new THREE.HemisphereLight(0xcfe3ff, 0x4a3b2a, 0.85);
   scene.add(hemi);
-  const sun = new THREE.DirectionalLight(0xfff2d8, 1.15);
+  sun = new THREE.DirectionalLight(0xfff2d8, 1.15);
   sun.position.set(-0.5, 1.0, 0.6);
   scene.add(sun);
   scene.add(markerGroup);
 
+  // drifting clouds
+  const cloudMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22, depthWrite: false });
+  const cloudGeo = new THREE.PlaneGeometry(1, 1);
+  for (let k = 0; k < 8; k++) {
+    const m = new THREE.Mesh(cloudGeo, cloudMat); m.rotation.x = -Math.PI / 2;
+    const s = 28 + Math.random() * 44; m.scale.set(s, s * 0.6, 1);
+    m.position.set((Math.random() - 0.5) * 280, 70 + Math.random() * 45, (Math.random() - 0.5) * 280);
+    scene.add(m); clouds.push(m);
+  }
+
   camera = new THREE.PerspectiveCamera(52, 1, 0.5, 4000);
 }
+
+// Day/night cycle: move & tint the sun, brighten/darken the sky.
+function updateSky() {
+  tod += 0.00018; if (tod > 1) tod -= 1;
+  const ang = tod * Math.PI * 2, sy = Math.sin(ang), sx = Math.cos(ang);
+  sun.position.set(sx * 0.6, Math.max(0.04, sy), 0.45);
+  const day = clamp(sy, 0, 1);
+  sun.intensity = 0.12 + day * 1.15;
+  sun.color.setRGB(1, 0.82 + 0.18 * day, 0.62 + 0.38 * day);
+  hemi.intensity = 0.22 + day * 0.6;
+  const horizon = clamp(1 - Math.abs(sy) * 2.5, 0, 1);   // warm glow at sunrise/sunset
+  let r = 16 + 127 * day + horizon * 70, g = 20 + 160 * day + horizon * 30, b = 38 + 192 * day;
+  scene.background.setRGB(clamp(r, 0, 255) / 255, clamp(g, 0, 255) / 255, clamp(b, 0, 255) / 255);
+}
+function updateClouds() { for (const m of clouds) { m.position.x += 0.05; if (m.position.x > 150) m.position.x = -150; } }
 
 // camera as orbit around terrain centre
 const cam = { az: 0.7, polar: 0.95, radius: 160, ty: 8, tx: 0, tz: 0 };
@@ -320,7 +346,7 @@ function buildMeshes() {
   terrGeo = makeGeo(); watGeo = makeGeo(); lavGeo = makeGeo();
 
   terrMesh = new THREE.Mesh(terrGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0.0, flatShading: false }));
-  watMesh = new THREE.Mesh(watGeo, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.82, roughness: 0.12, metalness: 0.1, depthWrite: false }));
+  watMesh = new THREE.Mesh(watGeo, new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.85, roughness: 0.05, metalness: 0.0, depthWrite: false }));
   lavMesh = new THREE.Mesh(lavGeo, new THREE.MeshBasicMaterial({ vertexColors: true }));
   watMesh.renderOrder = 1; lavMesh.renderOrder = 2;
   scene.add(terrMesh); scene.add(watMesh); scene.add(lavMesh);
@@ -566,6 +592,14 @@ canvas.addEventListener('pointercancel', endPointer);
 // UI
 //================================================================
 const toolsEl = document.getElementById('tools'), curname = document.getElementById('curname'), civEl = document.getElementById('civ');
+const feedEl = document.getElementById('feed');
+function notify(msg) {
+  if (!feedEl) return;
+  const d = document.createElement('div'); d.className = 'feedmsg'; d.textContent = msg; feedEl.appendChild(d);
+  requestAnimationFrame(() => d.classList.add('show'));
+  setTimeout(() => { d.classList.remove('show'); setTimeout(() => d.remove(), 300); }, 4200);
+  while (feedEl.children.length > 4) feedEl.removeChild(feedEl.firstChild);
+}
 const chips = [];
 TOOLS.forEach(t => {
   const c = document.createElement('div'); c.className = 'chip';
@@ -698,7 +732,7 @@ const ERAS = [
   { name: 'Modern',      year: 1950,   col: 0x7fb0dc, h: 7.0, w: 0.85 },
 ];
 const BUILD_CAP = 260, PER_BUILDING = 12, PEOPLE_CAP = 90, SPACING = 3;
-let pop = 0, year = -10000;
+let pop = 0, year = -10000, lastEra = -1;
 const buildings = [];
 const people = [];
 const G_BOX = new THREE.BoxGeometry(1, 1, 1);
@@ -726,7 +760,7 @@ function ensureCivAssets() {
 function resetCivilization() {
   for (const b of buildings) if (b.group) scene.remove(b.group);
   for (const p of people) if (p.mesh) scene.remove(p.mesh);
-  buildings.length = 0; people.length = 0; pop = 0; year = -10000;
+  buildings.length = 0; people.length = 0; pop = 0; year = -10000; lastEra = -1;
 }
 
 // Is a cell habitable at all (dry-ish land, not lava, not a cliff)?
@@ -828,10 +862,12 @@ function animatePeople() {
   }
 }
 function destroyBuildingsNear(cx, cz, R) {
+  let n = 0;
   for (let k = buildings.length - 1; k >= 0; k--) {
     const b = buildings[k];
-    if (Math.hypot(b.gx - cx, b.gy - cz) <= R) destroyBuilding(k);
+    if (Math.hypot(b.gx - cx, b.gy - cz) <= R) { destroyBuilding(k); n++; }
   }
+  if (n > 0) notify('☄️ Meteor flattened ' + n + ' settlement' + (n > 1 ? 's' : ''));
 }
 function foundSettlement(gx, gy) {
   let x = gx | 0, y = gy | 0; if (!inb(x, y)) return;
@@ -864,6 +900,7 @@ function landCapacity(era) {
 function stepCivilization() {
   if (pop <= 0 && buildings.length === 0) return;     // no society yet
   const era = eraIndex(year);
+  if (era !== lastEra) { if (era > lastEra && buildings.length) notify('🏛 Entered the ' + ERAS[era].name + ' age — ' + fmtYear(year)); lastEra = era; }
   if (pop > 0) {
     // advance the year so each era lasts roughly the same wall-clock time,
     // regardless of how many calendar years it actually spans
@@ -878,12 +915,14 @@ function stepCivilization() {
   let tries = 6;
   while (buildings.length < target && tries-- > 0) { if (!foundBuilding(era)) break; }
   // disasters + upgrade existing buildings to the current age
+  let lost = 0;
   for (let k = buildings.length - 1; k >= 0; k--) {
     const b = buildings[k], i = I(b.gx, b.gy);
-    if (water[i] > 0.8 || lava[i] > 0.05 || solidH(i) < b.baseH - 4) { destroyBuilding(k); continue; }
+    if (water[i] > 0.8 || lava[i] > 0.05 || solidH(i) < b.baseH - 4) { destroyBuilding(k); lost++; continue; }
     if (b.tier !== era) styleBuilding(b, era);
     seatBuilding(b);
   }
+  if (lost > 0) notify('🌊 Disaster destroyed ' + lost + ' settlement' + (lost > 1 ? 's' : ''));
   updatePeople();
 }
 
@@ -904,6 +943,8 @@ function loop() {
     if (simAcc > 1) simAcc = 1;
   }
   updateEffects();
+  updateSky();
+  updateClouds();
   updateMeshes();
   updateCamera();
   if (civEl) civEl.textContent = '🗓 ' + fmtYear(year) + ' · ' + ERAS[eraIndex(year)].name + ' · 👥 ' + Math.round(pop).toLocaleString() + ' · ' + BUILD;
