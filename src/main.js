@@ -3,7 +3,7 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
-const BUILD = 'v24';   // shown in the UI so you can confirm the live version
+const BUILD = 'v25';   // shown in the UI so you can confirm the live version
 
 //================================================================
 // Simulation fields
@@ -682,6 +682,7 @@ function updateEffects() {
     r.mesh.material.opacity = 0.8 * Math.max(0, 1 - r.t);
     if (r.t >= 1) { scene.remove(r.mesh); r.mesh.material.dispose(); rings.splice(k, 1); }
   }
+  animatePeople();
 }
 
 //================================================================
@@ -696,15 +697,17 @@ const ERAS = [
   { name: 'Industrial',  year: 1760,   col: 0x8a3f30, h: 4.2, w: 1.1 },
   { name: 'Modern',      year: 1950,   col: 0x7fb0dc, h: 7.0, w: 0.85 },
 ];
-const BUILD_CAP = 260, PER_BUILDING = 12, PEOPLE_CAP = 140;
+const BUILD_CAP = 260, PER_BUILDING = 12, PEOPLE_CAP = 90, SPACING = 3;
 let pop = 0, year = -10000;
 const buildings = [];
 const people = [];
 const G_BOX = new THREE.BoxGeometry(1, 1, 1);
 const G_CONE = new THREE.ConeGeometry(0.7, 1, 6);
 const G_CYL = new THREE.CylinderGeometry(0.55, 0.7, 1, 6);
-const G_PERSON = new THREE.ConeGeometry(0.34, 1.1, 5);
-let eraMats = null, roofMat = null, peopleMat = null;
+const G_PBODY = new THREE.BoxGeometry(0.34, 0.8, 0.24);
+const G_PHEAD = new THREE.BoxGeometry(0.3, 0.3, 0.3);
+const G_PLEG = new THREE.BoxGeometry(0.13, 0.7, 0.13);
+let eraMats = null, roofMat = null, bodyMat = null, skinMat = null;
 
 function eraIndex(y) { let e = 0; for (let k = 0; k < ERAS.length; k++) if (y >= ERAS[k].year) e = k; return e; }
 function fmtYear(y) { const v = Math.round(y); return v < 0 ? (-v) + ' BCE' : v + ' CE'; }
@@ -717,7 +720,8 @@ function ensureCivAssets() {
     emissive: e.name === 'Modern' ? 0x10202e : 0x000000,
   }));
   roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4036, roughness: 0.9 });
-  peopleMat = new THREE.MeshStandardMaterial({ color: 0xf4cda4, roughness: 0.7, emissive: 0x3a2a18, emissiveIntensity: 0.35 });
+  bodyMat = new THREE.MeshStandardMaterial({ color: 0x3f6ea8, roughness: 0.7 });   // shirt
+  skinMat = new THREE.MeshStandardMaterial({ color: 0xe7b58c, roughness: 0.7 });   // head/legs
 }
 function resetCivilization() {
   for (const b of buildings) if (b.group) scene.remove(b.group);
@@ -728,7 +732,11 @@ function resetCivilization() {
 function buildable(x, y) {
   if (!inb(x, y)) return false;
   const i = I(x, y);
-  if (occupied[i]) return false;
+  // keep buildings spaced apart so towns spread out instead of overlapping
+  for (let sy = -SPACING; sy <= SPACING; sy++) for (let sx = -SPACING; sx <= SPACING; sx++) {
+    const nx = x + sx, ny = y + sy;
+    if (nx >= 0 && ny >= 0 && nx < W && ny < H && occupied[ny * W + nx]) return false;
+  }
   if (water[i] > 0.3 || lava[i] > 0.02) return false;
   if (solidH(i) < BASEMENT + 3) return false;
   const hl = solidH(I(Math.max(0, x - 1), y)), hr = solidH(I(Math.min(W - 1, x + 1), y));
@@ -774,21 +782,43 @@ function destroyBuilding(k) {
   const b = buildings[k]; b.dead = true; if (b.group) scene.remove(b.group);
   occupied[I(b.gx, b.gy)] = 0; buildings.splice(k, 1); pop = Math.max(0, pop - PER_BUILDING);
 }
-// Little person figures milling around the towns
+// A simple stick-figure: two legs, a body and a head, that can swing its legs.
+function makePerson() {
+  const g = new THREE.Group();
+  const legL = new THREE.Mesh(G_PLEG, skinMat); legL.position.set(-0.12, 0.35, 0); g.add(legL);
+  const legR = new THREE.Mesh(G_PLEG, skinMat); legR.position.set(0.12, 0.35, 0); g.add(legR);
+  const body = new THREE.Mesh(G_PBODY, bodyMat); body.position.y = 1.05; g.add(body);
+  const head = new THREE.Mesh(G_PHEAD, skinMat); head.position.y = 1.6; g.add(head);
+  g.scale.setScalar(1.4); g.userData = { legL, legR };
+  return g;
+}
+// keep the population of figures in sync with the actual population (count only)
 function updatePeople() {
   ensureCivAssets();
-  const want = clamp(Math.floor(pop / 3), 0, PEOPLE_CAP);
+  const want = clamp(Math.floor(pop / 8), 0, PEOPLE_CAP);
   while (people.length < want && buildings.length) {
     const home = buildings[(Math.random() * buildings.length) | 0];
-    const m = new THREE.Mesh(G_PERSON, peopleMat); scene.add(m);
-    people.push({ mesh: m, home, ox: (Math.random() - 0.5) * 3.4, oz: (Math.random() - 0.5) * 3.4 });
+    const m = makePerson(); scene.add(m);
+    people.push({ mesh: m, home, px: home.gx, pz: home.gy, tx: undefined, tz: 0, phase: Math.random() * 6, speed: 0.035 + Math.random() * 0.05 });
   }
   while (people.length > want) { const p = people.pop(); scene.remove(p.mesh); }
+}
+// per-frame: wander near home, face travel direction, swing legs to "walk"
+function animatePeople() {
   for (const p of people) {
-    if (!p.home || p.home.dead) p.home = buildings.length ? buildings[(Math.random() * buildings.length) | 0] : null;
-    if (!p.home) continue;
-    const xg = clamp(p.home.gx + p.ox, 0, W - 1), zg = clamp(p.home.gy + p.oz, 0, H - 1);
-    p.mesh.position.set(xg - W / 2, solidH(I(xg | 0, zg | 0)) * HS + 0.55, zg - H / 2);
+    if (!p.home || p.home.dead) { p.home = buildings.length ? buildings[(Math.random() * buildings.length) | 0] : null; if (p.home) { p.px = p.home.gx; p.pz = p.home.gy; p.tx = undefined; } }
+    if (!p.home) { p.mesh.visible = false; continue; }
+    p.mesh.visible = true;
+    if (p.tx === undefined || (Math.abs(p.px - p.tx) < 0.4 && Math.abs(p.pz - p.tz) < 0.4)) {
+      p.tx = clamp(p.home.gx + (Math.random() - 0.5) * 9, 0, W - 1);
+      p.tz = clamp(p.home.gy + (Math.random() - 0.5) * 9, 0, H - 1);
+    }
+    const dx = p.tx - p.px, dz = p.tz - p.pz, d = Math.hypot(dx, dz) || 1;
+    p.px += dx / d * p.speed; p.pz += dz / d * p.speed; p.phase += p.speed * 4.5;
+    p.mesh.position.set(p.px - W / 2, solidH(I(p.px | 0, p.pz | 0)) * HS, p.pz - H / 2);
+    p.mesh.rotation.y = Math.atan2(dx, dz);
+    const sw = Math.sin(p.phase) * 0.6;
+    p.mesh.userData.legL.rotation.x = sw; p.mesh.userData.legR.rotation.x = -sw;
   }
 }
 function destroyBuildingsNear(cx, cz, R) {
