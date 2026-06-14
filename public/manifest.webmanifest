@@ -1,0 +1,15 @@
+{
+  "name": "Terraform · Water & Erosion Sandbox",
+  "short_name": "Terraform",
+  "description": "A From-Dust-style god game: sculpt terrain and watch realistic water flow, erosion, and lava cooling into rock.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a1018",
+  "theme_color": "#0a1018",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

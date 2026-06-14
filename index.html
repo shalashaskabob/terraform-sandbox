@@ -1,60 +1,500 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ProfGreenStats</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            colors: {
-              slate: {
-                750: '#2d3748',
-                850: '#1a202c',
-                900: '#0f172a',
-                950: '#020617',
-              },
-              primary: {
-                50: '#eff6ff',
-                100: '#dbeafe',
-                400: '#60a5fa',
-                500: '#3b82f6',
-                600: '#2563eb',
-                700: '#1d4ed8',
-                900: '#1e3a8a',
-              }
-            },
-            fontFamily: {
-              sans: ['Inter', 'system-ui', 'sans-serif'],
-              mono: ['JetBrains Mono', 'monospace'],
-            }
-          }
-        }
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a1018" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Terraform" />
+  <title>Terraform · Water & Erosion Sandbox</title>
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon.svg" />
+  <style>
+    :root{
+      --bg:#0a1018;
+      --panel:rgba(14,20,30,0.74);
+      --panel-solid:#0d141e;
+      --stroke:rgba(255,255,255,0.09);
+      --text:#eaf1fb;
+      --muted:#93a0b6;
+      --accent:#39b6ff;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+    html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      overscroll-behavior:none;-webkit-user-select:none;user-select:none;}
+    #stage{position:fixed;inset:0;}
+    canvas{display:block;width:100%;height:100%;touch-action:none;background:#0a1018;}
+
+    #topbar{position:absolute;top:0;left:0;right:0;
+      padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+      display:flex;align-items:center;gap:8px;z-index:5;pointer-events:none;}
+    #title{font-weight:800;letter-spacing:.16em;font-size:13px;
+      background:linear-gradient(90deg,#9be7ff,#39b6ff,#6ad29a);
+      -webkit-background-clip:text;background-clip:text;color:transparent;
+      text-shadow:0 1px 14px rgba(57,182,255,.25);}
+    #title small{display:block;font-weight:600;letter-spacing:.05em;font-size:9px;color:var(--muted);
+      -webkit-text-fill-color:var(--muted);}
+    .spacer{flex:1;}
+    .iconbtn{pointer-events:auto;width:38px;height:38px;border-radius:12px;border:1px solid var(--stroke);
+      background:var(--panel);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      color:var(--text);font-size:16px;display:flex;align-items:center;justify-content:center;
+      cursor:pointer;transition:transform .08s,background .15s;}
+    .iconbtn:active{transform:scale(.9);}
+    .iconbtn.on{background:linear-gradient(180deg,#49c0ff,#2c8fe0);border-color:transparent;color:#04121f;}
+
+    #controls{position:absolute;left:0;right:0;bottom:0;z-index:5;
+      padding:10px 8px calc(env(safe-area-inset-bottom) + 10px);
+      background:linear-gradient(180deg,rgba(10,16,24,0) 0%,rgba(10,16,24,.55) 35%,rgba(10,16,24,.92) 100%);
+      pointer-events:none;}
+    #toolrow{display:flex;align-items:center;gap:10px;margin-bottom:8px;pointer-events:auto;}
+    #brushwrap{flex:1;display:flex;align-items:center;gap:8px;
+      background:var(--panel);border:1px solid var(--stroke);border-radius:14px;padding:7px 12px;
+      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);}
+    #brushwrap label{font-size:10px;color:var(--muted);min-width:34px;letter-spacing:.04em;}
+    input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:4px;
+      background:rgba(255,255,255,.18);outline:none;}
+    input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;border-radius:50%;
+      background:var(--accent);box-shadow:0 0 10px rgba(57,182,255,.6);cursor:pointer;}
+    input[type=range]::-moz-range-thumb{width:20px;height:20px;border:none;border-radius:50%;background:var(--accent);}
+    #curname{font-size:11px;font-weight:700;min-width:62px;text-align:right;letter-spacing:.03em;}
+
+    #tools{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:2px 2px 4px;
+      pointer-events:auto;scrollbar-width:none;}
+    #tools::-webkit-scrollbar{display:none;}
+    .chip{flex:0 0 auto;display:flex;flex-direction:column;align-items:center;gap:4px;
+      width:62px;padding:8px 4px 6px;border-radius:14px;cursor:pointer;
+      background:var(--panel);border:1px solid var(--stroke);
+      backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+      transition:transform .08s,border-color .15s,background .15s;}
+    .chip:active{transform:scale(.94);}
+    .chip.sel{border-color:var(--accent);background:rgba(57,182,255,.16);
+      box-shadow:0 0 0 1px var(--accent) inset,0 4px 18px rgba(57,182,255,.22);}
+    .chip .ic{font-size:18px;line-height:1;}
+    .chip span{font-size:9.5px;font-weight:600;color:#cfd9ec;white-space:nowrap;}
+    .chip.sel span{color:#fff;}
+
+    #toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);max-width:82%;
+      background:var(--panel-solid);border:1px solid var(--stroke);border-radius:16px;
+      padding:16px 18px;font-size:13px;line-height:1.55;box-shadow:0 20px 60px rgba(0,0,0,.6);
+      z-index:20;opacity:0;pointer-events:none;transition:opacity .25s;text-align:center;}
+    #toast.show{opacity:1;}
+    #toast b{color:var(--accent);}
+    #toast .hint{margin-top:9px;color:var(--muted);font-size:11px;}
+    #badge{position:absolute;top:calc(env(safe-area-inset-top) + 52px);left:10px;z-index:4;
+      font-size:10px;color:var(--muted);background:var(--panel);border:1px solid var(--stroke);
+      border-radius:10px;padding:4px 8px;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+      pointer-events:none;font-variant-numeric:tabular-nums;opacity:.85;}
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="topbar">
+      <div id="title">TERRAFORM<small>water · erosion · lava</small></div>
+      <div class="spacer"></div>
+      <div class="iconbtn" id="helpBtn">?</div>
+      <div class="iconbtn" id="rainBtn" title="Toggle rain">🌧</div>
+      <div class="iconbtn" id="pauseBtn" title="Pause">⏸</div>
+      <div class="iconbtn" id="resetBtn" title="New land">⟳</div>
+    </div>
+    <div id="badge">tap to sculpt</div>
+    <div id="controls">
+      <div id="toolrow">
+        <div id="brushwrap">
+          <label>Brush</label>
+          <input type="range" id="brush" min="2" max="26" value="9" />
+        </div>
+        <div id="curname">Land</div>
+      </div>
+      <div id="tools"></div>
+    </div>
+    <div id="toast">
+      <div><b>Terraform</b> — sculpt a living landscape.</div>
+      <div>Raise <b>Land</b> to build mountains, pour <b>Water</b> and watch rivers carve canyons and fill lakes. Drop <b>Lava</b> to grow rock, then <b>Plant</b> life near the shore.</div>
+      <div class="hint">Tap to dismiss · ⟳ makes new land · Add to Home Screen to install</div>
+    </div>
+  </div>
+
+<script>
+"use strict";
+(function(){
+//================================================================
+// Canvas + buffers
+//================================================================
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d',{alpha:false});
+let W=0,H=0,cssW=0,cssH=0,cellPx=5,dpr=1,blurPx=5;
+let small,sctx,glowC,gctx,img,gimg;
+
+// simulation fields (Float32Array of size W*H)
+let rock,sand,water,sed,lava,ltemp,grass;
+let fL,fR,fU,fD,vx,vy,tmp,steamFx;
+
+function alloc(){
+  const s=document.getElementById('stage');
+  cssW=s.clientWidth; cssH=s.clientHeight;
+  dpr=Math.min(window.devicePixelRatio||1,2);
+  cellPx=Math.max(4,Math.round(cssW/132));
+  W=Math.max(48,Math.floor(cssW/cellPx));
+  H=Math.max(48,Math.floor(cssH/cellPx));
+  while(W*H>13000){ cellPx++; W=Math.floor(cssW/cellPx); H=Math.floor(cssH/cellPx); }
+  blurPx=Math.max(4,cellPx*1.3);
+
+  canvas.width=Math.round(cssW*dpr); canvas.height=Math.round(cssH*dpr);
+  canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high';
+
+  small=document.createElement('canvas'); small.width=W; small.height=H;
+  sctx=small.getContext('2d'); img=sctx.createImageData(W,H);
+  glowC=document.createElement('canvas'); glowC.width=W; glowC.height=H;
+  gctx=glowC.getContext('2d'); gimg=gctx.createImageData(W,H);
+
+  const N=W*H;
+  rock=new Float32Array(N); sand=new Float32Array(N); water=new Float32Array(N);
+  sed=new Float32Array(N); lava=new Float32Array(N); ltemp=new Float32Array(N); grass=new Float32Array(N);
+  fL=new Float32Array(N); fR=new Float32Array(N); fU=new Float32Array(N); fD=new Float32Array(N);
+  vx=new Float32Array(N); vy=new Float32Array(N); tmp=new Float32Array(N); steamFx=new Float32Array(N);
+}
+
+const I=(x,y)=>y*W+x;
+const inb=(x,y)=>x>=0&&x<W&&y>=0&&y<H;
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const DX=[-1,1,0,0], DY=[0,0,-1,1];
+
+//================================================================
+// Terrain generation (fractal value noise)
+//================================================================
+let seed=12345;
+function rnd(){ seed=(seed*1664525+1013904223)&0x7fffffff; return seed/0x7fffffff; }
+function hash2(ix,iy){ let h=ix*374761393+iy*668265263; h=(h^(h>>13))*1274126177; return ((h^(h>>16))&0xffff)/0xffff; }
+function valNoise(x,y){
+  const x0=Math.floor(x),y0=Math.floor(y),x1=x0+1,y1=y0+1;
+  const sx=x-x0,sy=y-y0;
+  const n00=hash2(x0,y0),n10=hash2(x1,y0),n01=hash2(x0,y1),n11=hash2(x1,y1);
+  const ux=sx*sx*(3-2*sx),uy=sy*sy*(3-2*sy);
+  const a=n00+(n10-n00)*ux, b=n01+(n11-n01)*ux;
+  return (a+(b-a)*uy)*2-1;
+}
+function genTerrain(){
+  rock.fill(0); sand.fill(0); water.fill(0); sed.fill(0);
+  lava.fill(0); ltemp.fill(0); grass.fill(0);
+  fL.fill(0); fR.fill(0); fU.fill(0); fD.fill(0); vx.fill(0); vy.fill(0);
+
+  const oct=[ {f:0.012,a:30}, {f:0.025,a:16}, {f:0.05,a:8}, {f:0.1,a:4} ];
+  const offs=oct.map(()=>[rnd()*1000,rnd()*1000]);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    let h=0;
+    for(let o=0;o<oct.length;o++)
+      h+=valNoise((x+offs[o][0])*oct[o].f,(y+offs[o][1])*oct[o].f)*oct[o].a;
+    // radial falloff -> island; lets water drain toward the rim
+    const nx=(x/W-0.5)*2, ny=(y/H-0.5)*2;
+    const dd=nx*nx+ny*ny;
+    h-=dd*18;
+    const i=I(x,y), base=22+h;
+    rock[i]=clamp(base*0.6,1,200);
+    sand[i]=clamp(base*0.4,0,120);
+  }
+  // a few starting lakes in low spots
+  for(let k=0;k<6;k++){
+    const lx=(rnd()*W)|0, ly=(rnd()*H)|0;
+    if(rock[I(lx,ly)]+sand[I(lx,ly)]<20){
+      for(let dy=-6;dy<=6;dy++)for(let dx=-6;dx<=6;dx++){
+        const x=lx+dx,y=ly+dy; if(inb(x,y)&&dx*dx+dy*dy<36) water[I(x,y)]+=6;
       }
-    </script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-      body { font-family: 'Inter', sans-serif; background-color: #020617; color: #f8fafc; }
-      .font-mono { font-family: 'JetBrains Mono', monospace; }
-    </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "recharts": "https://esm.sh/recharts@^3.6.0",
-    "vite": "https://esm.sh/vite@^7.3.0",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
+    }
   }
 }
+
+//================================================================
+// Simulation — pipe-model shallow water + hydraulic erosion
+//================================================================
+const dt=0.10, G=10, Lpipe=1.0;
+const Kc=0.55, Ks=0.45, Kd=0.45, Kevap=0.010, FLUXDAMP=0.985, MINW=0.0008;
+let raining=false, paused=false;
+
+const surf=i=>rock[i]+sand[i]+lava[i];
+
+function stepWater(){
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y), w=water[i], hi=surf(i)+w;
+    let l=0,r=0,u=0,d=0;
+    if(x>0){   const j=i-1; l=Math.max(0,fL[i]*FLUXDAMP + dt*G*(hi-(surf(j)+water[j]))/Lpipe); }
+    if(x<W-1){ const j=i+1; r=Math.max(0,fR[i]*FLUXDAMP + dt*G*(hi-(surf(j)+water[j]))/Lpipe); }
+    if(y>0){   const j=i-W; u=Math.max(0,fU[i]*FLUXDAMP + dt*G*(hi-(surf(j)+water[j]))/Lpipe); }
+    if(y<H-1){ const j=i+W; d=Math.max(0,fD[i]*FLUXDAMP + dt*G*(hi-(surf(j)+water[j]))/Lpipe); }
+    const tot=l+r+u+d;
+    if(tot>0){ const K=Math.min(1,w/(tot*dt)); l*=K;r*=K;u*=K;d*=K; }
+    fL[i]=l; fR[i]=r; fU[i]=u; fD[i]=d;
+  }
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y);
+    let inflow=0; const outflow=fL[i]+fR[i]+fU[i]+fD[i];
+    if(x>0)   inflow+=fR[i-1];
+    if(x<W-1) inflow+=fL[i+1];
+    if(y>0)   inflow+=fD[i-W];
+    if(y<H-1) inflow+=fU[i+W];
+    const w0=water[i];
+    let w1=w0+dt*(inflow-outflow); if(w1<0) w1=0;
+    water[i]=w1;
+    const wm=(w0+w1)*0.5+1e-4;
+    const fxL=(x>0)?fR[i-1]:0, fxR=(x<W-1)?fL[i+1]:0;
+    const fyU=(y>0)?fD[i-W]:0, fyD=(y<H-1)?fU[i+W]:0;
+    vx[i]=((fxL-fL[i])+(fR[i]-fxR))*0.5/wm;
+    vy[i]=((fyU-fU[i])+(fD[i]-fyD))*0.5/wm;
+  }
+}
+
+function stepErosion(){
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y);
+    if(water[i]<MINW){ if(sed[i]>0){ const dp=sed[i]*0.5; sand[i]+=dp; sed[i]-=dp; } continue; }
+    const hL=surf(x>0?i-1:i), hR=surf(x<W-1?i+1:i);
+    const hU=surf(y>0?i-W:i), hD=surf(y<H-1?i+W:i);
+    const dhx=(hR-hL)*0.5, dhy=(hD-hU)*0.5;
+    const slope=Math.sqrt(dhx*dhx+dhy*dhy);
+    let sinT=slope/Math.sqrt(slope*slope+1); if(sinT<0.02) sinT=0.02;
+    const speed=Math.sqrt(vx[i]*vx[i]+vy[i]*vy[i]);
+    const wfac=Math.min(1,water[i]*3);
+    const C=Kc*sinT*speed*wfac;
+    if(C>sed[i]){
+      let e=Ks*(C-sed[i]); if(e>0.4) e=0.4;
+      const fromSand=Math.min(sand[i],e); sand[i]-=fromSand;
+      const rem=e-fromSand; let total=fromSand;
+      if(rem>0){ const fromRock=Math.min(rock[i],rem*0.18); rock[i]-=fromRock; total+=fromRock; }
+      sed[i]+=total;
+    } else {
+      let dp=Kd*(sed[i]-C); if(dp>0.4) dp=0.4; sand[i]+=dp; sed[i]-=dp;
+    }
+  }
+  // semi-Lagrangian sediment advection
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y);
+    if(water[i]<MINW){ tmp[i]=sed[i]; continue; }
+    const sx=clamp(x-vx[i]*dt,0,W-1.001), sy=clamp(y-vy[i]*dt,0,H-1.001);
+    const x0=sx|0,y0=sy|0,fx=sx-x0,fy=sy-y0;
+    const a=sed[I(x0,y0)],b=sed[I(x0+1,y0)],c=sed[I(x0,y0+1)],d=sed[I(x0+1,y0+1)];
+    const top=a+(b-a)*fx, bot=c+(d-c)*fx;
+    tmp[i]=top+(bot-top)*fy;
+  }
+  sed.set(tmp);
+  const ev=1-Kevap*dt*(raining?0.4:1);
+  for(let i=0,n=W*H;i<n;i++){ if(water[i]>0){ water[i]*=ev; if(water[i]<1e-5) water[i]=0; } }
+}
+
+function stepLava(){
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y), lv=lava[i];
+    if(lv<=0.001) continue;
+    const hi=surf(i);
+    let sumd=0; const nb=[];
+    for(let d=0;d<4;d++){
+      const nx=x+DX[d],ny=y+DY[d]; if(!inb(nx,ny)) continue;
+      const j=I(nx,ny), diff=hi-surf(j);
+      if(diff>0.05){ nb.push(j); nb.push(diff); sumd+=diff; }
+    }
+    if(sumd>0){
+      const flow=Math.min(lv*0.35,sumd*0.25);
+      for(let k=0;k<nb.length;k+=2){
+        const j=nb[k], diff=nb[k+1], give=flow*(diff/sumd);
+        lava[i]-=give; lava[j]+=give; ltemp[j]=Math.max(ltemp[j],ltemp[i]*0.96);
+      }
+    }
+    ltemp[i]-=2.0+(water[i]>MINW?40:0); if(ltemp[i]<0) ltemp[i]=0;
+    if(water[i]>MINW && lava[i]>0){
+      const solid=Math.min(lava[i],0.5+water[i]);
+      rock[i]+=solid; lava[i]-=solid; water[i]=Math.max(0,water[i]-solid*0.8); steamFx[i]=1;
+    }
+    if(ltemp[i]<140 && lava[i]>0){
+      const s=Math.min(lava[i],lava[i]*0.10+0.02); rock[i]+=s; lava[i]-=s;
+    }
+  }
+}
+
+function stepGrass(){
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y);
+    if(lava[i]>0.05||water[i]>0.6){ grass[i]=Math.max(0,grass[i]-0.05); continue; }
+    if(grass[i]>0){
+      let moist=water[i]>0.01?1:0;
+      if(!moist) for(let d=0;d<4;d++){ const nx=x+DX[d],ny=y+DY[d]; if(inb(nx,ny)&&water[I(nx,ny)]>0.02){moist=1;break;} }
+      if(moist && sand[i]>1){
+        grass[i]=Math.min(1,grass[i]+0.02);
+        if(Math.random()<0.06){ const d=(Math.random()*4)|0,nx=x+DX[d],ny=y+DY[d];
+          if(inb(nx,ny)){ const j=I(nx,ny); if(lava[j]<0.05&&water[j]<0.4&&sand[j]>1&&grass[j]<0.1) grass[j]=0.2; } }
+      } else grass[i]=Math.max(0,grass[i]-0.005);
+    }
+  }
+}
+
+let frame=0;
+function simulate(){
+  frame++;
+  steamFx.fill(0);
+  if(raining && frame%2===0){
+    const drops=(W*H/600)|0;
+    for(let k=0;k<drops;k++){ const x=(Math.random()*W)|0,y=(Math.random()*H)|0; water[I(x,y)]+=0.6; }
+  }
+  stepLava();
+  stepWater();
+  stepErosion();
+  if(frame%3===0) stepGrass();
+}
+
+//================================================================
+// Rendering — hill-shaded terrain + water + lava bloom
+//================================================================
+const LX=-0.45,LY=-0.62,LZ=0.64;
+function render(){
+  const d=img.data, gd=gimg.data;
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=I(x,y);
+    const th=rock[i]+sand[i], lv=lava[i], w=water[i];
+    const hL=(x>0?rock[i-1]+sand[i-1]:th), hR=(x<W-1?rock[i+1]+sand[i+1]:th);
+    const hU=(y>0?rock[i-W]+sand[i-W]:th), hD=(y<H-1?rock[i+W]+sand[i+W]:th);
+    let nx=hL-hR, ny=hU-hD, nz=2.2;
+    const inv=1/Math.sqrt(nx*nx+ny*ny+nz*nz); nx*=inv;ny*=inv;nz*=inv;
+    let light=clamp(0.35+(nx*LX+ny*LY+nz*LZ)*0.85,0.18,1.35);
+
+    let r,g,b; const elev=th, sandRatio=sand[i]/(th+0.001);
+    if(elev<14){ r=92;g=80;b=64; }
+    else if(elev<20){ r=196;g=176;b=120; }
+    else if(elev<46){ const t=(elev-20)/26; r=176-60*t; g=158-58*t; b=110-44*t; }
+    else if(elev<70){ const t=(elev-46)/24; r=116-40*t; g=100-30*t; b=66-16*t; }
+    else { const t=clamp((elev-70)/30,0,1); r=76+150*t; g=70+150*t; b=58+160*t; }
+    r+=sandRatio*22; g+=sandRatio*16;
+    const gr=grass[i];
+    if(gr>0){ r=r*(1-gr)+58*gr; g=g*(1-gr)+150*gr; b=b*(1-gr)+62*gr; }
+    r*=light; g*=light; b*=light;
+
+    let er=0,eg=0,eb=0;
+    if(w>MINW){
+      const depth=clamp(w/8,0,1);
+      const wr=24+30*(1-depth), wg=92+70*(1-depth), wb=150+70*depth;
+      const wsL=(x>0?surf(i-1)+water[i-1]:0), wsR=(x<W-1?surf(i+1)+water[i+1]:0);
+      const ripple=clamp(0.7+(wsL-wsR)*0.25,0.4,1.4);
+      const a=clamp(0.35+depth*0.55,0.35,0.92);
+      r=r*(1-a)+wr*ripple*a; g=g*(1-a)+wg*ripple*a; b=b*(1-a)+wb*a;
+      const sp=Math.sqrt(vx[i]*vx[i]+vy[i]*vy[i]);
+      const foam=clamp(sp*0.5-0.15,0,0.6);
+      if(foam>0){ r=r*(1-foam)+235*foam; g=g*(1-foam)+245*foam; b=b*(1-foam)+255*foam; }
+    }
+    if(lv>0.02){
+      const heat=clamp(ltemp[i]/400,0,1);
+      const lr=255, lg=70+150*heat, lb=20+30*heat;
+      const a=clamp(0.5+Math.min(lv,4)/4*0.5,0.5,1);
+      r=r*(1-a)+lr*a; g=g*(1-a)+lg*a; b=b*(1-a)+lb*a;
+      er=lr*a; eg=lg*a; eb=lb*a;
+    }
+    if(steamFx[i]>0){ r=clamp(r+120,0,255); g=clamp(g+120,0,255); b=clamp(b+120,0,255); }
+
+    const p=i*4;
+    d[p]=clamp(r,0,255); d[p+1]=clamp(g,0,255); d[p+2]=clamp(b,0,255); d[p+3]=255;
+    gd[p]=er; gd[p+1]=eg; gd[p+2]=eb; gd[p+3]= er>0?255:0;
+  }
+  sctx.putImageData(img,0,0); gctx.putImageData(gimg,0,0);
+  ctx.globalCompositeOperation='source-over'; ctx.filter='none';
+  ctx.drawImage(small,0,0,W,H,0,0,cssW,cssH);
+  ctx.save();
+  ctx.globalCompositeOperation='lighter';
+  ctx.globalAlpha=0.85; ctx.filter='blur('+blurPx+'px)';
+  ctx.drawImage(glowC,0,0,W,H,0,0,cssW,cssH);
+  ctx.globalAlpha=0.5; ctx.filter='blur('+(blurPx*2.3)+'px)';
+  ctx.drawImage(glowC,0,0,W,H,0,0,cssW,cssH);
+  ctx.restore();
+}
+
+//================================================================
+// Tools / painting
+//================================================================
+const T_LAND=0,T_ROCK=1,T_WATER=2,T_LAVA=3,T_PLANT=4,T_SCOOP=5;
+const TOOLS=[
+  {id:T_LAND, name:"Land", ic:"⛰"},
+  {id:T_WATER,name:"Water",ic:"💧"},
+  {id:T_LAVA, name:"Lava", ic:"🌋"},
+  {id:T_ROCK, name:"Rock", ic:"🪨"},
+  {id:T_PLANT,name:"Plant",ic:"🌱"},
+  {id:T_SCOOP,name:"Scoop",ic:"⛏"},
+];
+let tool=T_LAND, brush=9;
+const pointers=new Map();
+
+function paint(px,py){
+  const gx=px/cssW*W, gy=py/cssH*H, r=brush, r2=r*r;
+  for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+    const dd=dx*dx+dy*dy; if(dd>r2) continue;
+    const x=(gx+dx)|0, y=(gy+dy)|0; if(!inb(x,y)) continue;
+    const fall=1-dd/r2, i=I(x,y);
+    switch(tool){
+      case T_LAND: sand[i]+=2.4*fall; break;
+      case T_ROCK: rock[i]+=2.6*fall; break;
+      case T_WATER: water[i]+=2.2*fall; break;
+      case T_LAVA: lava[i]+=2.2*fall; ltemp[i]=400; break;
+      case T_PLANT: if(lava[i]<0.05&&water[i]<0.5&&(rock[i]+sand[i])>14) grass[i]=Math.min(1,grass[i]+0.5*fall); break;
+      case T_SCOOP:
+        if(water[i]>0) water[i]=Math.max(0,water[i]-3*fall);
+        else { const s=Math.min(sand[i],2.4*fall); sand[i]-=s; const rem=2.4*fall-s; if(rem>0) rock[i]=Math.max(0,rock[i]-rem); }
+        lava[i]=Math.max(0,lava[i]-3*fall); grass[i]=0; break;
+    }
+  }
+}
+const pos=e=>{const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top];};
+canvas.addEventListener('pointerdown',e=>{hideToast();canvas.setPointerCapture(e.pointerId);
+  const[x,y]=pos(e);pointers.set(e.pointerId,[x,y]);paint(x,y);e.preventDefault();},{passive:false});
+canvas.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId))return;
+  const[x,y]=pos(e),pv=pointers.get(e.pointerId);
+  const st=Math.max(1,(Math.hypot(x-pv[0],y-pv[1])/(cellPx*1.5))|0);
+  for(let s=1;s<=st;s++)paint(pv[0]+(x-pv[0])*s/st,pv[1]+(y-pv[1])*s/st);
+  pointers.set(e.pointerId,[x,y]);e.preventDefault();},{passive:false});
+const end=e=>pointers.delete(e.pointerId);
+canvas.addEventListener('pointerup',end);canvas.addEventListener('pointercancel',end);
+
+//================================================================
+// UI
+//================================================================
+const toolsEl=document.getElementById('tools'), curname=document.getElementById('curname');
+const chips=[];
+TOOLS.forEach(t=>{
+  const c=document.createElement('div'); c.className='chip';
+  c.innerHTML='<div class="ic">'+t.ic+'</div><span>'+t.name+'</span>';
+  c.addEventListener('click',()=>selectTool(t.id));
+  toolsEl.appendChild(c); chips.push([t.id,c]);
+});
+function selectTool(id){ tool=id; curname.textContent=TOOLS.find(t=>t.id===id).name;
+  chips.forEach(([tid,el])=>el.classList.toggle('sel',tid===id)); }
+selectTool(T_LAND);
+document.getElementById('brush').addEventListener('input',e=>brush=+e.target.value);
+const pauseBtn=document.getElementById('pauseBtn');
+pauseBtn.addEventListener('click',function(){paused=!paused;this.textContent=paused?'▶':'⏸';this.classList.toggle('on',paused);});
+const rainBtn=document.getElementById('rainBtn');
+rainBtn.addEventListener('click',function(){raining=!raining;this.classList.toggle('on',raining);});
+document.getElementById('resetBtn').addEventListener('click',()=>{seed=(Math.random()*1e9)|0;genTerrain();});
+
+const toast=document.getElementById('toast'), badge=document.getElementById('badge');
+function showToast(){toast.classList.add('show');}
+function hideToast(){toast.classList.remove('show');badge.style.display='none';}
+toast.addEventListener('click',hideToast);
+document.getElementById('helpBtn').addEventListener('click',showToast);
+showToast(); setTimeout(()=>{if(toast.classList.contains('show'))hideToast();},7000);
+
+//================================================================
+// Loop + lifecycle
+//================================================================
+function loop(){
+  if(pointers.size){ for(const[,p]of pointers) paint(p[0],p[1]); }
+  if(!paused) simulate();
+  render();
+  requestAnimationFrame(loop);
+}
+function boot(){ alloc(); genTerrain(); requestAnimationFrame(loop); }
+let rt; window.addEventListener('resize',()=>{clearTimeout(rt);rt=setTimeout(()=>{alloc();genTerrain();},220);});
+if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{})); }
+boot();
+})();
 </script>
-</head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+</body>
 </html>
