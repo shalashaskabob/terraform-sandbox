@@ -3,7 +3,7 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
-const BUILD = 'v28';   // shown in the UI so you can confirm the live version
+const BUILD = 'v29';   // shown in the UI so you can confirm the live version
 
 //================================================================
 // Simulation fields
@@ -735,13 +735,19 @@ const BUILD_CAP = 260, PER_BUILDING = 12, PEOPLE_CAP = 90, SPACING = 3;
 let pop = 0, year = -10000, lastEra = -1;
 const buildings = [];
 const people = [];
+const ROAD_CAP = 220, FARM_CAP = 130;
+const roads = [], farms = [], wonders = [];
+const farmed = new Set(), wonderEras = new Set();
 const G_BOX = new THREE.BoxGeometry(1, 1, 1);
 const G_CONE = new THREE.ConeGeometry(0.7, 1, 6);
 const G_CYL = new THREE.CylinderGeometry(0.55, 0.7, 1, 6);
+const G_PYR = new THREE.ConeGeometry(1, 1, 4);
+const G_FARM = new THREE.PlaneGeometry(1, 1);
 const G_PBODY = new THREE.BoxGeometry(0.34, 0.8, 0.24);
 const G_PHEAD = new THREE.BoxGeometry(0.3, 0.3, 0.3);
 const G_PLEG = new THREE.BoxGeometry(0.13, 0.7, 0.13);
 let eraMats = null, roofMat = null, bodyMat = null, skinMat = null;
+let roadDirt = null, roadStone = null, roadAsphalt = null, farmMat = null;
 
 function eraIndex(y) { let e = 0; for (let k = 0; k < ERAS.length; k++) if (y >= ERAS[k].year) e = k; return e; }
 function fmtYear(y) { const v = Math.round(y); return v < 0 ? (-v) + ' BCE' : v + ' CE'; }
@@ -756,11 +762,20 @@ function ensureCivAssets() {
   roofMat = new THREE.MeshStandardMaterial({ color: 0x4a4036, roughness: 0.9 });
   bodyMat = new THREE.MeshStandardMaterial({ color: 0x3f6ea8, roughness: 0.7 });   // shirt
   skinMat = new THREE.MeshStandardMaterial({ color: 0xe7b58c, roughness: 0.7 });   // head/legs
+  roadDirt = new THREE.MeshStandardMaterial({ color: 0x6b5a3f, roughness: 1 });
+  roadStone = new THREE.MeshStandardMaterial({ color: 0x8a8076, roughness: 1 });
+  roadAsphalt = new THREE.MeshStandardMaterial({ color: 0x32343a, roughness: 0.9 });
+  farmMat = new THREE.MeshStandardMaterial({ color: 0x6f9b3c, roughness: 1 });
 }
 function resetCivilization() {
   for (const b of buildings) if (b.group) scene.remove(b.group);
   for (const p of people) if (p.mesh) scene.remove(p.mesh);
-  buildings.length = 0; people.length = 0; pop = 0; year = -10000; lastEra = -1;
+  for (const r of roads) scene.remove(r.mesh);
+  for (const f of farms) scene.remove(f.mesh);
+  for (const w of wonders) scene.remove(w.group);
+  buildings.length = 0; people.length = 0; roads.length = 0; farms.length = 0; wonders.length = 0;
+  farmed.clear(); wonderEras.clear();
+  pop = 0; year = -10000; lastEra = -1;
 }
 
 // Is a cell habitable at all (dry-ish land, not lava, not a cliff)?
@@ -815,7 +830,7 @@ function addBuilding(x, y, era) {
   if (buildings.length >= BUILD_CAP) return false;
   ensureCivAssets();
   const b = { gx: x, gy: y, group: null, baseH: solidH(I(x, y)), rnd: Math.random(), tier: -1, dead: false };
-  occupied[I(x, y)] = 1; buildings.push(b); styleBuilding(b, era);
+  occupied[I(x, y)] = 1; buildings.push(b); styleBuilding(b, era); linkRoad(b, era);
   return true;
 }
 function destroyBuilding(k) {
@@ -897,6 +912,59 @@ function landCapacity(era) {
     if (water[i] < 0.3 && lava[i] < 0.02 && (rock[i] + sand[i]) > BASEMENT + 3) hab++;
   return hab * 3 * (era + 1) * 0.45;
 }
+// Roads connect a new building to its nearest neighbour (Stone Age onward).
+function addRoad(a, b, era) {
+  if (roads.length >= ROAD_CAP) return;
+  const ax = a.gx - W / 2, az = a.gy - H / 2, bx = b.gx - W / 2, bz = b.gy - H / 2;
+  const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz); if (len < 0.6) return;
+  const mat = era <= 1 ? roadDirt : era <= 3 ? roadStone : roadAsphalt;
+  const m = new THREE.Mesh(G_BOX, mat); m.scale.set(len, 0.2, 0.7);
+  const y = (solidH(I(a.gx, a.gy)) + solidH(I(b.gx, b.gy))) * 0.5 * HS + 0.12;
+  m.position.set((ax + bx) / 2, y, (az + bz) / 2); m.rotation.y = -Math.atan2(dz, dx);
+  scene.add(m); roads.push({ mesh: m });
+}
+function linkRoad(nb, era) {
+  if (era < 1) return;
+  let best = null, bd = 1e9;
+  for (const b of buildings) { if (b === nb) continue; const d = Math.hypot(b.gx - nb.gx, b.gy - nb.gy); if (d < bd) { bd = d; best = b; } }
+  if (best && bd <= 16) addRoad(nb, best, era);
+}
+// Farms: green crop tiles on dry land next to water near a town.
+function tryAddFarm(era) {
+  if (era < 1 || farms.length >= FARM_CAP || !buildings.length) return;
+  const b = buildings[(Math.random() * buildings.length) | 0];
+  for (let a = 0; a < 6; a++) {
+    const x = clamp(b.gx + ((Math.random() * 9) | 0) - 4, 0, W - 1), y = clamp(b.gy + ((Math.random() * 9) | 0) - 4, 0, H - 1), i = I(x, y);
+    if (occupied[i] || farmed.has(i) || water[i] > 0.3 || lava[i] > 0.02 || solidH(i) < BASEMENT + 3) continue;
+    let nearW = false;
+    for (let d = 0; d < 4; d++) { const nx = x + DX[d], ny = y + DY[d]; if (inb(nx, ny) && water[I(nx, ny)] > 0.02) { nearW = true; break; } }
+    if (!nearW) continue;
+    const m = new THREE.Mesh(G_FARM, farmMat); m.rotation.x = -Math.PI / 2; m.scale.set(1.7, 1.7, 1);
+    m.position.set(x - W / 2, solidH(i) * HS + 0.06, y - H / 2);
+    scene.add(m); farms.push({ mesh: m, i }); farmed.add(i); return;
+  }
+}
+const WONDER_NAMES = ['', '', 'Great Pyramid', 'Grand Castle', 'Iron Works', 'Skytower'];
+function buildWonder(era) {
+  if (!buildings.length) return;
+  let cx = 0, cy = 0; for (const b of buildings) { cx += b.gx; cy += b.gy; }
+  cx = (cx / buildings.length) | 0; cy = (cy / buildings.length) | 0;
+  let px = cx, py = cy;
+  for (let r = 0; r < 12; r++) { const x = clamp(cx + ((Math.random() * 9) | 0) - 4, 2, W - 3), y = clamp(cy + ((Math.random() * 9) | 0) - 4, 2, H - 3); if (buildableManual(x, y)) { px = x; py = y; break; } }
+  const g = new THREE.Group(), mat = eraMats[era];
+  if (era === 2) { const m = new THREE.Mesh(G_PYR, mat); m.scale.set(6, 5, 6); m.position.y = 2.5; g.add(m); }
+  else if (era === 3) {
+    const base = new THREE.Mesh(G_BOX, mat); base.scale.set(6, 3, 6); base.position.y = 1.5; g.add(base);
+    for (const o of [[-2.5, -2.5], [2.5, -2.5], [-2.5, 2.5], [2.5, 2.5]]) { const t = new THREE.Mesh(G_BOX, mat); t.scale.set(1, 5, 1); t.position.set(o[0], 2.5, o[1]); g.add(t); }
+  } else if (era === 4) {
+    const m = new THREE.Mesh(G_BOX, mat); m.scale.set(7, 4, 5); m.position.y = 2; g.add(m);
+    for (const ox of [-2, 0, 2]) { const c = new THREE.Mesh(G_BOX, roofMat); c.scale.set(0.6, 4, 0.6); c.position.set(ox, 5, 1); g.add(c); }
+  } else { const m = new THREE.Mesh(G_BOX, mat); m.scale.set(2.4, 16, 2.4); m.position.y = 8; g.add(m); const a = new THREE.Mesh(G_BOX, roofMat); a.scale.set(0.3, 3, 0.3); a.position.y = 17.5; g.add(a); }
+  g.position.set(px - W / 2, solidH(I(px, py)) * HS, py - H / 2);
+  scene.add(g); wonders.push({ group: g, era }); occupied[I(px, py)] = 1;
+  notify('🗿 Wonder built: ' + (WONDER_NAMES[era] || 'Monument'));
+}
+
 function stepCivilization() {
   if (pop <= 0 && buildings.length === 0) return;     // no society yet
   const era = eraIndex(year);
@@ -923,6 +991,15 @@ function stepCivilization() {
     seatBuilding(b);
   }
   if (lost > 0) notify('🌊 Disaster destroyed ' + lost + ' settlement' + (lost > 1 ? 's' : ''));
+  // farms grow near water; remove any that get flooded
+  if (Math.random() < 0.5) tryAddFarm(era);
+  for (let k = farms.length - 1; k >= 0; k--) {
+    const f = farms[k];
+    if (water[f.i] > 0.6 || lava[f.i] > 0.05) { scene.remove(f.mesh); farmed.delete(f.i); farms.splice(k, 1); }
+    else f.mesh.position.y = solidH(f.i) * HS + 0.06;
+  }
+  // wonders at population milestones (one per age from Ancient on)
+  if (era >= 2 && pop > 120 + era * 50 && !wonderEras.has(era)) { wonderEras.add(era); buildWonder(era); }
   updatePeople();
 }
 
