@@ -3,6 +3,8 @@
 // rendered as a real lit 3D landscape with Three.js.
 import * as THREE from 'three';
 
+const BUILD = 'v24';   // shown in the UI so you can confirm the live version
+
 //================================================================
 // Simulation fields
 //================================================================
@@ -864,7 +866,7 @@ function loop() {
   updateEffects();
   updateMeshes();
   updateCamera();
-  if (civEl) civEl.textContent = '🗓 ' + fmtYear(year) + ' · ' + ERAS[eraIndex(year)].name + ' · 👥 ' + Math.round(pop).toLocaleString();
+  if (civEl) civEl.textContent = '🗓 ' + fmtYear(year) + ' · ' + ERAS[eraIndex(year)].name + ' · 👥 ' + Math.round(pop).toLocaleString() + ' · ' + BUILD;
   renderer.render(scene, camera);
   requestAnimationFrame(loop);
 }
