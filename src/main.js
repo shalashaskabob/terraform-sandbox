@@ -401,7 +401,7 @@ const TOOLS = [
   { id: T_PLANT, name: 'Plant', ic: '🌱' },
   { id: T_SCOOP, name: 'Scoop', ic: '⛏' },
 ];
-let tool = T_LAND, brush = 9;
+let tool = T_HAND, brush = 9;
 
 function paintGrid(gx, gy) {
   const r = brush, r2 = r * r;
@@ -509,7 +509,7 @@ TOOLS.forEach(t => {
   toolsEl.appendChild(c); chips.push([t.id, c]);
 });
 function selectTool(id) { tool = id; curname.textContent = TOOLS.find(t => t.id === id).name; chips.forEach(([tid, el]) => el.classList.toggle('sel', tid === id)); }
-selectTool(T_LAND);
+selectTool(T_HAND);
 document.getElementById('brush').addEventListener('input', e => brush = +e.target.value);
 const pauseBtn = document.getElementById('pauseBtn');
 pauseBtn.addEventListener('click', function () { paused = !paused; this.textContent = paused ? '▶' : '⏸'; this.classList.toggle('on', paused); });
