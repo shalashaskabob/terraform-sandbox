@@ -1,5 +1,6 @@
-// Simple offline cache for the Terraform PWA.
-const CACHE = 'terraform-v1';
+// Offline cache for the Terraform PWA — network-first so new deploys show up
+// immediately, falling back to cache when offline.
+const CACHE = 'terraform-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -17,13 +18,12 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    caches.match(e.request).then((hit) =>
-      hit ||
-      fetch(e.request).then((res) => {
+    fetch(e.request)
+      .then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
         return res;
-      }).catch(() => caches.match('./index.html'))
-    )
+      })
+      .catch(() => caches.match(e.request).then((hit) => hit || caches.match('./index.html')))
   );
 });
