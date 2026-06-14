@@ -886,6 +886,25 @@ function boot() {
 
 let rt;
 window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(resize, 220); });
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+if ('serviceWorker' in navigator) {
+  // Auto-update: reload once when a newly deployed service worker takes control,
+  // and poll for updates on launch / when the app regains focus.
+  if (navigator.serviceWorker.controller) {
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return; refreshing = true; window.location.reload();
+    });
+  }
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').then((reg) => {
+      reg.update();
+      setInterval(() => reg.update(), 60000);
+    }).catch(() => {});
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible')
+      navigator.serviceWorker.getRegistration().then((r) => r && r.update()).catch(() => {});
+  });
+}
 
 boot();

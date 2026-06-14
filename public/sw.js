@@ -1,6 +1,6 @@
 // Offline cache for the Terraform PWA — network-first so new deploys show up
 // immediately, falling back to cache when offline.
-const CACHE = 'terraform-v2';
+const CACHE = 'terraform-v3';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg'];
 
 self.addEventListener('install', (e) => {
